@@ -8,6 +8,7 @@ import '../features/auth/presentation/splash_screen.dart';
 import '../features/auth/presentation/welcome_screen.dart';
 import '../features/home/presentation/home_screen.dart';
 import '../features/auth/presentation/profile_screen.dart';
+import '../features/ftp_servers/presentation/server_scan_screen.dart';
 import '../state/auth/auth_controller.dart';
 
 final goRouterProvider = Provider<GoRouter>((ref) {
@@ -27,9 +28,6 @@ final goRouterProvider = Provider<GoRouter>((ref) {
 
       final initialized = ref.read(authInitializedProvider);
 
-      // Only redirect to the Splash screen while the app is performing the
-      // initial auth restoration. Don't send user away from the current
-      // login/signup page when they trigger a manual auth action (loading).
       if (auth.isLoading && !initialized) {
         return isSplash ? null : SplashScreen.path;
       }
@@ -44,7 +42,7 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       }
 
       if (isSplash || isWelcome || isLogin || isSignup) {
-        return HomeScreen.path;
+        return ServerScanScreen.path;
       }
 
       return null;
@@ -65,6 +63,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: SignupScreen.path,
         builder: (context, state) => const SignupScreen(),
+      ),
+      GoRoute(
+        path: ServerScanScreen.path,
+        builder: (context, state) => const ServerScanScreen(),
       ),
       GoRoute(
         path: HomeScreen.path,

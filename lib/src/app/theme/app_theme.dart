@@ -46,15 +46,12 @@ class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        // use a slightly darker filled color for form fields to reduce
-        // contrast while keeping them distinct from the app background
         fillColor: AppColors.cardSurface,
         hintStyle: const TextStyle(color: AppColors.textLow),
         labelStyle: const TextStyle(color: AppColors.textMid),
         prefixIconColor: AppColors.primary,
         suffixIconColor: AppColors.primaryAlt,
         errorStyle: const TextStyle(color: AppColors.danger),
-        // allow error messages to wrap to multiple lines instead of ellipsizing
         errorMaxLines: 3,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),

@@ -71,7 +71,6 @@ class ProfileScreen extends ConsumerWidget {
                       subtitle: Text(user?.email ?? ''),
                     ),
                     const SizedBox(height: 4),
-                    // User ID removed per design — only show email under Account
                   ],
                 ),
               ),

@@ -2,14 +2,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/api_error.dart';
 import '../../features/auth/data/auth_repository.dart';
-import '../../features/auth/data/auth_models.dart';
 
 final authControllerProvider =
     AsyncNotifierProvider<AuthController, AuthSession?>(AuthController.new);
-
-/// Indicates whether the initial auth restoration process has completed at least once.
-/// This prevents router from showing the splash/loading screen for manual
-/// sign-in/sign-up actions after the app has initialized.
 final authInitializedProvider = StateProvider<bool>((ref) => false);
 
 class AuthController extends AsyncNotifier<AuthSession?> {
@@ -18,8 +13,6 @@ class AuthController extends AsyncNotifier<AuthSession?> {
     final repo = ref.read(authRepositoryProvider);
     try {
       final session = await repo.restoreSession();
-      // mark initialization complete so UI routing won't treat subsequent
-      // AsyncLoading states as the initial app load
       ref.read(authInitializedProvider.notifier).state = true;
       return session;
     } catch (_) {
