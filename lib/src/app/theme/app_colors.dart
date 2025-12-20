@@ -6,8 +6,6 @@ class AppColors {
   static const black = Color(0xFF0B0D10);
   static const surface = Color(0xFF11151B);
   static const surfaceAlt = Color(0xFF151B23);
-  // Slightly darker slate card/form surface to sit above the app background
-  // Use a dark slate tint (cool, not green) for a modern, muted look
   static const cardSurface = Color(0xFF0F1B23);
   static const outline = Color(0xFF2A3340);
 
