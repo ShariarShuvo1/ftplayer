@@ -9,6 +9,8 @@ import '../features/auth/presentation/welcome_screen.dart';
 import '../features/home/presentation/home_screen.dart';
 import '../features/auth/presentation/profile_screen.dart';
 import '../features/ftp_servers/presentation/server_scan_screen.dart';
+import '../features/content_details/presentation/content_details_screen.dart';
+import '../features/home/data/home_models.dart';
 import '../state/auth/auth_controller.dart';
 
 final goRouterProvider = Provider<GoRouter>((ref) {
@@ -75,6 +77,13 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: ProfileScreen.path,
         builder: (context, state) => const ProfileScreen(),
+      ),
+      GoRoute(
+        path: ContentDetailsScreen.path,
+        builder: (context, state) {
+          final contentItem = state.extra as ContentItem;
+          return ContentDetailsScreen(contentItem: contentItem);
+        },
       ),
     ],
   );
