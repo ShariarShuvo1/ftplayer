@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+import 'package:logger/logger.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../state/content/content_details_provider.dart';
+import '../../../state/pip/pip_provider.dart';
 import '../../home/data/home_models.dart';
 import '../data/content_details_models.dart';
 import 'widgets/video_player_widget.dart';
+
+final _logger = Logger();
 
 class ContentDetailsScreen extends ConsumerStatefulWidget {
   const ContentDetailsScreen({required this.contentItem, super.key});
@@ -24,11 +30,133 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     with SingleTickerProviderStateMixin {
   TabController? _tabController;
   String? _currentVideoUrl;
+  double _dragOffset = 0.0;
+  bool _isDragging = false;
+  bool _activatedPipFromHere = false;
+  Player? _receivedPlayer;
+  VideoController? _receivedVideoController;
+  bool _isVideoPlayerFullscreen = false;
+  final GlobalKey<_VideoPlayerWidgetWrapperState> _videoPlayerKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+
+    final pipState = ref.read(pipProvider);
+    if (!_activatedPipFromHere &&
+        pipState.isActive &&
+        pipState.player != null &&
+        pipState.videoController != null &&
+        pipState.contentItemJson != null) {
+      try {
+        final pipContentItem = ContentItem.fromJson(pipState.contentItemJson!);
+        if (pipContentItem.id == widget.contentItem.id) {
+          _logger.d('Receiving player from PiP - same content');
+          _receivedPlayer = pipState.player;
+          _receivedVideoController = pipState.videoController;
+
+          Future.microtask(() {
+            ref.read(pipProvider.notifier).deactivatePip(disposePlayer: false);
+          });
+        } else {
+          _logger.d('Closing PiP - different content');
+          Future.microtask(() {
+            ref.read(pipProvider.notifier).deactivatePip(disposePlayer: true);
+          });
+        }
+      } catch (e) {
+        _logger.e('Error checking PiP content: $e');
+      }
+    }
+  }
+
+  void _notifyPlayerReceived() {
+    if (_receivedPlayer != null && _receivedVideoController != null) {
+      final videoPlayerState = _videoPlayerKey.currentState;
+      if (videoPlayerState != null) {
+        _logger.d('Notifying video player of received ownership');
+        videoPlayerState.receiveOwnership(
+          _receivedPlayer!,
+          _receivedVideoController!,
+        );
+        _receivedPlayer = null;
+        _receivedVideoController = null;
+      }
+    }
+  }
 
   @override
   void dispose() {
     _tabController?.dispose();
     super.dispose();
+  }
+
+  void _handleVerticalDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      _isDragging = true;
+      _dragOffset += details.delta.dy;
+      _dragOffset = _dragOffset.clamp(0.0, double.infinity);
+    });
+  }
+
+  void _handleVerticalDragEnd(DragEndDetails details) {
+    final threshold = MediaQuery.of(context).size.height * 0.3;
+
+    if (_dragOffset > threshold) {
+      _activatePipMode();
+    } else {
+      setState(() {
+        _dragOffset = 0.0;
+        _isDragging = false;
+      });
+    }
+  }
+
+  void _activatePipMode() {
+    _logger.d('Attempting to activate PiP mode');
+    final videoPlayerState = _videoPlayerKey.currentState;
+
+    if (videoPlayerState != null &&
+        videoPlayerState.player != null &&
+        videoPlayerState.videoController != null) {
+      final detailsAsync = ref.read(
+        contentDetailsProvider((
+          contentId: widget.contentItem.id,
+          serverName: widget.contentItem.serverName,
+          serverType: widget.contentItem.serverType,
+          initialData: null,
+        )),
+      );
+
+      final title = detailsAsync.value?.title ?? widget.contentItem.title;
+      final videoUrl = _currentVideoUrl ?? detailsAsync.value?.videoUrl ?? '';
+
+      _logger.d('Activating PiP: $title');
+
+      ref
+          .read(pipProvider.notifier)
+          .activatePip(
+            player: videoPlayerState.player!,
+            videoController: videoPlayerState.videoController!,
+            videoUrl: videoUrl,
+            videoTitle: title,
+            contentItemJson: widget.contentItem.toJson(),
+          );
+
+      videoPlayerState.transferOwnership();
+
+      setState(() {
+        _activatedPipFromHere = true;
+      });
+
+      Navigator.of(context).pop();
+    } else {
+      _logger.w('Cannot activate PiP - missing player or controller');
+      setState(() {
+        _dragOffset = 0.0;
+        _isDragging = false;
+      });
+    }
   }
 
   @override
@@ -44,34 +172,99 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
     return Scaffold(
       backgroundColor: AppColors.black,
-      body: detailsAsync.when(
-        data: (details) => _buildContent(details),
-        loading: () => const Center(
-          child: CircularProgressIndicator(color: AppColors.primary),
-        ),
-        error: (error, stack) => Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(
-                Icons.error_outline,
-                color: AppColors.danger,
-                size: 64,
+      body: Stack(
+        children: [
+          detailsAsync.when(
+            data: (details) => GestureDetector(
+              onVerticalDragUpdate: _handleVerticalDragUpdate,
+              onVerticalDragEnd: _handleVerticalDragEnd,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                transform: Matrix4.translationValues(0, _dragOffset, 0),
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 200),
+                  opacity: _isDragging ? 0.9 - (_dragOffset / 1000) : 1.0,
+                  child: _buildContent(details),
+                ),
               ),
-              const SizedBox(height: 16),
-              const Text(
-                'Failed to load content',
-                style: TextStyle(color: AppColors.textMid, fontSize: 16),
+            ),
+            loading: () => const Center(
+              child: CircularProgressIndicator(color: AppColors.primary),
+            ),
+            error: (error, stack) => Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.error_outline,
+                    color: AppColors.danger,
+                    size: 64,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Failed to load content',
+                    style: TextStyle(color: AppColors.textMid, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    error.toString(),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AppColors.textLow,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              Text(
-                error.toString(),
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: AppColors.textLow, fontSize: 12),
-              ),
-            ],
+            ),
           ),
-        ),
+          if (_isDragging && _dragOffset > 100)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 20,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.3),
+                        blurRadius: 16,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.picture_in_picture_alt,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _dragOffset > MediaQuery.of(context).size.height * 0.3
+                            ? 'Release for PiP mode'
+                            : 'Drag down for PiP',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -89,10 +282,51 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     return Column(
       children: [
         if (videoUrl != null && videoUrl.isNotEmpty)
-          VideoPlayerWidget(
-            key: ValueKey(videoUrl),
-            videoUrl: videoUrl,
-            autoPlay: true,
+          Stack(
+            children: [
+              Builder(
+                builder: (context) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _notifyPlayerReceived();
+                  });
+                  return _VideoPlayerWidgetWrapper(
+                    key: _videoPlayerKey,
+                    videoUrl: videoUrl,
+                    autoPlay: true,
+                    receivedPlayer: _receivedPlayer,
+                    receivedController: _receivedVideoController,
+                    onFullscreenChanged: (isFullscreen) {
+                      setState(() {
+                        _isVideoPlayerFullscreen = isFullscreen;
+                      });
+                    },
+                  );
+                },
+              ),
+              Positioned(
+                top: 0,
+                right: 0,
+                child: SafeArea(
+                  child: _isVideoPlayerFullscreen
+                      ? const SizedBox.shrink()
+                      : IconButton(
+                          icon: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.5),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.close,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                ),
+              ),
+            ],
           )
         else
           Container(
@@ -121,26 +355,13 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              details.title,
-                              style: const TextStyle(
-                                color: AppColors.textHigh,
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.close,
-                              color: AppColors.textMid,
-                            ),
-                            onPressed: () => Navigator.of(context).pop(),
-                          ),
-                        ],
+                      Text(
+                        details.title,
+                        style: const TextStyle(
+                          color: AppColors.textHigh,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const SizedBox(height: 8),
                       Row(
@@ -491,5 +712,118 @@ class _SeasonTabBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(covariant SliverPersistentHeaderDelegate oldDelegate) {
     return false;
+  }
+}
+
+class _VideoPlayerWidgetWrapper extends StatefulWidget {
+  const _VideoPlayerWidgetWrapper({
+    required this.videoUrl,
+    this.autoPlay = true,
+    this.receivedPlayer,
+    this.receivedController,
+    this.onFullscreenChanged,
+    super.key,
+  });
+
+  final String videoUrl;
+  final bool autoPlay;
+  final Player? receivedPlayer;
+  final VideoController? receivedController;
+  final void Function(bool)? onFullscreenChanged;
+
+  @override
+  State<_VideoPlayerWidgetWrapper> createState() =>
+      _VideoPlayerWidgetWrapperState();
+}
+
+class _VideoPlayerWidgetWrapperState extends State<_VideoPlayerWidgetWrapper> {
+  final GlobalKey _playerKey = GlobalKey();
+  bool _ownershipTransferred = false;
+  Player? _receivedPlayer;
+  VideoController? _receivedController;
+
+  @override
+  void initState() {
+    super.initState();
+    _receivedPlayer = widget.receivedPlayer;
+    _receivedController = widget.receivedController;
+  }
+
+  Player? get player {
+    if (_receivedPlayer != null) return _receivedPlayer;
+
+    final state = _playerKey.currentState;
+    if (state != null) {
+      try {
+        return (state as dynamic).player as Player?;
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  VideoController? get videoController {
+    if (_receivedController != null) return _receivedController;
+
+    final state = _playerKey.currentState;
+    if (state != null) {
+      try {
+        return (state as dynamic).videoController as VideoController?;
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  void transferOwnership() {
+    final state = _playerKey.currentState;
+    if (state != null) {
+      try {
+        (state as dynamic).transferOwnership();
+        setState(() {
+          _ownershipTransferred = true;
+        });
+      } catch (e) {
+        setState(() {
+          _ownershipTransferred = false;
+        });
+      }
+    }
+  }
+
+  void receiveOwnership(Player player, VideoController controller) {
+    setState(() {
+      _receivedPlayer = player;
+      _receivedController = controller;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ownershipTransferred) {
+      return Container(
+        width: double.infinity,
+        height: 250,
+        color: AppColors.black,
+      );
+    }
+
+    if (_receivedPlayer != null && _receivedController != null) {
+      return VideoPlayerWidget.fromExisting(
+        key: _playerKey,
+        player: _receivedPlayer!,
+        videoController: _receivedController!,
+        onFullscreenChanged: widget.onFullscreenChanged,
+      );
+    }
+
+    return VideoPlayerWidget(
+      key: _playerKey,
+      videoUrl: widget.videoUrl,
+      autoPlay: widget.autoPlay,
+      onFullscreenChanged: widget.onFullscreenChanged,
+    );
   }
 }

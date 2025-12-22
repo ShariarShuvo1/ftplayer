@@ -23,6 +23,34 @@ class ContentItem {
   final String? contentType;
   final String? description;
 
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'posterUrl': posterUrl,
+    'serverName': serverName,
+    'serverType': serverType,
+    'year': year,
+    'quality': quality,
+    'rating': rating,
+    'contentType': contentType,
+    'description': description,
+  };
+
+  factory ContentItem.fromJson(Map<String, dynamic> json) {
+    return ContentItem(
+      id: json['id'] as String,
+      title: json['title'] as String,
+      posterUrl: json['posterUrl'] as String,
+      serverName: json['serverName'] as String,
+      serverType: json['serverType'] as String,
+      year: json['year'] as String?,
+      quality: json['quality'] as String?,
+      rating: json['rating'] as double?,
+      contentType: json['contentType'] as String?,
+      description: json['description'] as String?,
+    );
+  }
+
   factory ContentItem.fromCircleFtp(
     Map<String, dynamic> json,
     String baseImageUrl,
