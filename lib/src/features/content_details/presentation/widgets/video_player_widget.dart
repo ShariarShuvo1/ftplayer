@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:video_player/video_player.dart';
+import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../app/theme/app_colors.dart';
@@ -8,52 +12,124 @@ class VideoPlayerWidget extends StatefulWidget {
   const VideoPlayerWidget({
     required this.videoUrl,
     this.autoPlay = true,
+    this.onFullscreenChanged,
     super.key,
-  });
+  }) : player = null,
+       videoController = null,
+       _isFromExisting = false;
+
+  const VideoPlayerWidget.fromExisting({
+    required this.player,
+    required this.videoController,
+    this.onFullscreenChanged,
+    super.key,
+  }) : videoUrl = '',
+       autoPlay = false,
+       _isFromExisting = true;
 
   final String videoUrl;
   final bool autoPlay;
+  final Player? player;
+  final VideoController? videoController;
+  final bool _isFromExisting;
+  final void Function(bool)? onFullscreenChanged;
 
   @override
   State<VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
 }
 
 class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
-  late VideoPlayerController _controller;
+  late Player _player;
+  late VideoController _videoController;
   bool _isInitialized = false;
   bool _hasError = false;
-  bool _showControls = true;
+  bool _showControls = false;
   String? _errorMessage;
   bool _isBuffering = false;
   bool _isDisposing = false;
+  bool _ownershipTransferred = false;
+  bool _isFullscreen = false;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _isPlaying = false;
+  Timer? _controlsTimer;
+
+  Player? get player => _player;
+  VideoController? get videoController => _videoController;
+  bool get isFullscreen => _isFullscreen;
 
   @override
   void initState() {
     super.initState();
-    _initializePlayer();
+    if (widget._isFromExisting &&
+        widget.player != null &&
+        widget.videoController != null) {
+      _player = widget.player!;
+      _videoController = widget.videoController!;
+      _setupExistingPlayer();
+    } else {
+      _initializePlayer();
+    }
   }
 
-  Future<void> _initializePlayer() async {
+  Future<void> _setupExistingPlayer() async {
     try {
-      _controller = VideoPlayerController.networkUrl(
-        Uri.parse(widget.videoUrl),
-        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-      );
-
-      await _controller.initialize();
-
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-
-        if (widget.autoPlay) {
-          await _controller.play();
-          WakelockPlus.enable();
+      _player.stream.error.listen((error) {
+        if (mounted && !_isDisposing) {
+          setState(() {
+            _hasError = true;
+            _errorMessage = error;
+          });
         }
-      }
+      });
 
-      _controller.addListener(_videoListener);
+      _player.stream.buffering.listen((buffering) {
+        if (mounted && !_isDisposing) {
+          setState(() {
+            _isBuffering = buffering;
+          });
+        }
+      });
+
+      _player.stream.duration.listen((duration) {
+        if (mounted && !_isDisposing) {
+          setState(() {
+            _duration = duration;
+          });
+        }
+      });
+
+      _player.stream.position.listen((position) {
+        if (mounted && !_isDisposing) {
+          setState(() {
+            _position = position;
+          });
+        }
+      });
+
+      _player.stream.playing.listen((playing) {
+        if (mounted && !_isDisposing) {
+          setState(() {
+            _isPlaying = playing;
+          });
+          if (playing) {
+            WakelockPlus.enable();
+            if (_showControls) {
+              _startControlsTimer();
+            }
+          } else {
+            WakelockPlus.disable();
+            _cancelControlsTimer();
+          }
+        }
+      });
+
+      setState(() {
+        _isInitialized = true;
+        _position = _player.state.position;
+        _duration = _player.state.duration;
+        _isPlaying = _player.state.playing;
+      });
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -64,24 +140,69 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     }
   }
 
-  void _videoListener() {
-    if (!mounted || _isDisposing) return;
+  Future<void> _initializePlayer() async {
+    try {
+      _player = Player();
+      _videoController = VideoController(_player);
 
-    final isBuffering = _controller.value.isBuffering;
-    if (_isBuffering != isBuffering) {
-      if (mounted && !_isDisposing) {
+      _player.stream.error.listen((error) {
+        if (mounted && !_isDisposing) {
+          setState(() {
+            _hasError = true;
+            _errorMessage = error;
+          });
+        }
+      });
+
+      _player.stream.buffering.listen((buffering) {
+        if (mounted && !_isDisposing) {
+          setState(() {
+            _isBuffering = buffering;
+          });
+        }
+      });
+
+      _player.stream.position.listen((position) {
+        if (mounted && !_isDisposing) {
+          setState(() {
+            _position = position;
+          });
+        }
+      });
+
+      _player.stream.duration.listen((duration) {
+        if (mounted && !_isDisposing) {
+          setState(() {
+            _duration = duration;
+          });
+        }
+      });
+
+      _player.stream.playing.listen((playing) {
+        if (mounted && !_isDisposing) {
+          setState(() {
+            _isPlaying = playing;
+          });
+        }
+      });
+
+      await _player.open(Media(widget.videoUrl));
+
+      if (mounted) {
         setState(() {
-          _isBuffering = isBuffering;
+          _isInitialized = true;
         });
-      }
-    }
 
-    if (_controller.value.hasError) {
-      if (mounted && !_isDisposing) {
+        if (widget.autoPlay) {
+          await _player.play();
+          WakelockPlus.enable();
+        }
+      }
+    } catch (e) {
+      if (mounted) {
         setState(() {
           _hasError = true;
-          _errorMessage =
-              _controller.value.errorDescription ?? 'Playback error';
+          _errorMessage = e.toString();
         });
       }
     }
@@ -89,36 +210,81 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
   @override
   void dispose() {
-    _isDisposing = true;
-    try {
-      _controller.removeListener(_videoListener);
-      _controller.pause();
-      Future.delayed(const Duration(milliseconds: 100), () {
-        _controller.dispose();
-      });
-    } catch (e) {
-      // Ignore disposal errors
+    _cancelControlsTimer();
+    if (_isFullscreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     }
-    WakelockPlus.disable();
+    _isDisposing = true;
+    if (!_ownershipTransferred) {
+      try {
+        _player.dispose();
+      } catch (e) {
+        // Ignore disposal errors
+      }
+      WakelockPlus.disable();
+    }
     super.dispose();
   }
 
+  void transferOwnership() {
+    _ownershipTransferred = true;
+  }
+
   void _togglePlayPause() {
+    if (_isPlaying) {
+      _player.pause();
+      WakelockPlus.disable();
+    } else {
+      _player.play();
+      WakelockPlus.enable();
+    }
+  }
+
+  Future<void> _toggleFullscreen() async {
     setState(() {
-      if (_controller.value.isPlaying) {
-        _controller.pause();
-        WakelockPlus.disable();
-      } else {
-        _controller.play();
-        WakelockPlus.enable();
-      }
+      _isFullscreen = !_isFullscreen;
     });
+
+    widget.onFullscreenChanged?.call(_isFullscreen);
+
+    if (_isFullscreen) {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    } else {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
+    }
   }
 
   void _toggleControls() {
     setState(() {
       _showControls = !_showControls;
     });
+    if (_showControls && _isPlaying) {
+      _startControlsTimer();
+    }
+  }
+
+  void _startControlsTimer() {
+    _cancelControlsTimer();
+    _controlsTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _isPlaying) {
+        setState(() {
+          _showControls = false;
+        });
+      }
+    });
+  }
+
+  void _cancelControlsTimer() {
+    _controlsTimer?.cancel();
+    _controlsTimer = null;
   }
 
   String _formatDuration(Duration duration) {
@@ -185,14 +351,14 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
       onTap: _toggleControls,
       child: Container(
         width: double.infinity,
-        height: 250,
+        height: _isFullscreen ? MediaQuery.of(context).size.height : 250,
         color: AppColors.black,
         child: Stack(
           children: [
             Center(
-              child: AspectRatio(
-                aspectRatio: _controller.value.aspectRatio,
-                child: VideoPlayer(_controller),
+              child: Video(
+                controller: _videoController,
+                controls: NoVideoControls,
               ),
             ),
             if (_isBuffering)
@@ -227,7 +393,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                     mainAxisAlignment: MainAxisAlignment.end,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      const Spacer(),
+                      const Expanded(child: SizedBox()),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.center,
@@ -245,9 +411,8 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                               ),
                               onPressed: () {
                                 final newPosition =
-                                    _controller.value.position -
-                                    const Duration(seconds: 10);
-                                _controller.seekTo(
+                                    _position - const Duration(seconds: 10);
+                                _player.seek(
                                   newPosition < Duration.zero
                                       ? Duration.zero
                                       : newPosition,
@@ -263,9 +428,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                             ),
                             child: IconButton(
                               icon: Icon(
-                                _controller.value.isPlaying
-                                    ? Icons.pause
-                                    : Icons.play_arrow,
+                                _isPlaying ? Icons.pause : Icons.play_arrow,
                                 color: Colors.white,
                                 size: 36,
                               ),
@@ -288,11 +451,10 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                               ),
                               onPressed: () {
                                 final newPosition =
-                                    _controller.value.position +
-                                    const Duration(seconds: 10);
-                                _controller.seekTo(
-                                  newPosition > _controller.value.duration
-                                      ? _controller.value.duration
+                                    _position + const Duration(seconds: 10);
+                                _player.seek(
+                                  newPosition > _duration
+                                      ? _duration
                                       : newPosition,
                                 );
                               },
@@ -300,52 +462,82 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                           ),
                         ],
                       ),
-                      const Spacer(),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 10,
-                        ),
+                      const SizedBox(height: 48),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
                         child: Row(
                           children: [
                             Text(
-                              _formatDuration(_controller.value.position),
+                              _formatDuration(_position),
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: 8),
                             Expanded(
-                              child: SizedBox(
-                                height: 24,
-                                child: VideoProgressIndicator(
-                                  _controller,
-                                  allowScrubbing: true,
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 8,
+                              child: SliderTheme(
+                                data: SliderThemeData(
+                                  trackHeight: 3,
+                                  thumbShape: const RoundSliderThumbShape(
+                                    enabledThumbRadius: 5,
                                   ),
-                                  colors: const VideoProgressColors(
-                                    playedColor: AppColors.primary,
-                                    bufferedColor: Colors.white38,
-                                    backgroundColor: Colors.white24,
+                                  overlayShape: const RoundSliderOverlayShape(
+                                    overlayRadius: 10,
                                   ),
+                                  activeTrackColor: AppColors.primary,
+                                  inactiveTrackColor: Colors.white.withValues(
+                                    alpha: 0.3,
+                                  ),
+                                  thumbColor: AppColors.primary,
+                                  overlayColor: AppColors.primary.withValues(
+                                    alpha: 0.2,
+                                  ),
+                                ),
+                                child: Slider(
+                                  value: _duration.inMilliseconds > 0
+                                      ? _position.inMilliseconds
+                                            .toDouble()
+                                            .clamp(
+                                              0.0,
+                                              _duration.inMilliseconds
+                                                  .toDouble(),
+                                            )
+                                      : 0.0,
+                                  min: 0.0,
+                                  max: _duration.inMilliseconds > 0
+                                      ? _duration.inMilliseconds.toDouble()
+                                      : 1.0,
+                                  onChanged: (value) {
+                                    _player.seek(
+                                      Duration(milliseconds: value.toInt()),
+                                    );
+                                  },
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: 8),
                             Text(
-                              _formatDuration(_controller.value.duration),
+                              _formatDuration(_duration),
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
                               ),
+                            ),
+                            const SizedBox(width: 4),
+                            IconButton(
+                              icon: Icon(
+                                _isFullscreen
+                                    ? Icons.fullscreen_exit
+                                    : Icons.fullscreen,
+                                color: Colors.white,
+                                size: 22,
+                              ),
+                              padding: const EdgeInsets.all(8),
+                              constraints: const BoxConstraints(),
+                              onPressed: _toggleFullscreen,
                             ),
                           ],
                         ),
