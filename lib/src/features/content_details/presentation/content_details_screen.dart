@@ -65,6 +65,13 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           _receivedPlayer = pipState.player;
           _receivedVideoController = pipState.videoController;
 
+          // Restore episode state for series
+          _currentVideoUrl = pipState.currentVideoUrl;
+          _currentSeasonNumber = pipState.currentSeasonNumber;
+          _currentEpisodeNumber = pipState.currentEpisodeNumber;
+          _currentEpisodeId = pipState.currentEpisodeId;
+          _currentEpisodeTitle = pipState.currentEpisodeTitle;
+
           Future.microtask(() {
             ref.read(pipProvider.notifier).deactivatePip(disposePlayer: false);
           });
@@ -245,6 +252,11 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
             videoTitle: title,
             contentItemJson: widget.contentItem.toJson(),
             initialPosition: initialPosition,
+            currentVideoUrl: _currentVideoUrl,
+            currentSeasonNumber: _currentSeasonNumber,
+            currentEpisodeNumber: _currentEpisodeNumber,
+            currentEpisodeId: _currentEpisodeId,
+            currentEpisodeTitle: _currentEpisodeTitle,
           );
 
       videoPlayerState.transferOwnership();
