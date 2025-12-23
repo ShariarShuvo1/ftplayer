@@ -16,6 +16,7 @@ import 'widgets/video_player_widget.dart';
 import 'widgets/watch_status_dropdown.dart';
 import 'widgets/content_details_section.dart';
 import 'widgets/seasons_section.dart';
+import 'widgets/comments_section.dart';
 
 final _logger = Logger();
 
@@ -262,6 +263,14 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
       _logger.d('🎬 Activating PiP: $title with url: $videoUrl');
 
+      final screenWidth = MediaQuery.of(context).size.width;
+      const pipWidth = 180.0;
+      final snapToLeft = _dragOffset < screenWidth / 2;
+      final initialPosition = Offset(
+        snapToLeft ? 16 : screenWidth - pipWidth - 16,
+        _dragOffset.clamp(0, MediaQuery.of(context).size.height - 100),
+      );
+
       ref
           .read(pipProvider.notifier)
           .activatePip(
@@ -270,6 +279,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
             videoUrl: videoUrl,
             videoTitle: title,
             contentItemJson: widget.contentItem.toJson(),
+            initialPosition: initialPosition,
           );
 
       _logger.d('🎬 Activating PiP state set, now transferring ownership...');
@@ -710,6 +720,36 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                     onEpisodeTap: _handleEpisodeTap,
                   ),
                 ),
+              SliverToBoxAdapter(
+                child: Builder(
+                  builder: (context) {
+                    final workingServersAsync = ref.watch(
+                      workingFtpServersProvider,
+                    );
+                    return workingServersAsync.when(
+                      data: (servers) {
+                        final server = servers
+                            .where(
+                              (s) => s.name == widget.contentItem.serverName,
+                            )
+                            .firstOrNull;
+                        if (server == null) {
+                          return const SizedBox.shrink();
+                        }
+                        return CommentsSection(
+                          ftpServerId: server.id,
+                          serverType: server.serverType,
+                          contentType: details.contentType,
+                          contentId: widget.contentItem.id,
+                          contentTitle: details.title,
+                        );
+                      },
+                      loading: () => const SizedBox.shrink(),
+                      error: (_, _) => const SizedBox.shrink(),
+                    );
+                  },
+                ),
+              ),
             ],
           ),
         ),

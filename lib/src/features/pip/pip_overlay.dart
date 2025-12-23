@@ -20,14 +20,16 @@ class PipOverlay extends ConsumerStatefulWidget {
 }
 
 class _PipOverlayState extends ConsumerState<PipOverlay> {
-  Offset _position = const Offset(16, 100);
+  late Offset _position;
   bool _isDragging = false;
   bool _showControls = true;
   Timer? _hideControlsTimer;
+  bool _positionInitialized = false;
 
   @override
   void initState() {
     super.initState();
+    _position = const Offset(16, 100);
     _startHideControlsTimer();
   }
 
@@ -69,7 +71,13 @@ class _PipOverlayState extends ConsumerState<PipOverlay> {
         pipState.player == null ||
         pipState.videoController == null) {
       _logger.d('🎬 PiP inactive or null references, hiding overlay');
+      _positionInitialized = false;
       return const SizedBox.shrink();
+    }
+
+    if (!_positionInitialized) {
+      _position = pipState.position;
+      _positionInitialized = true;
     }
 
     final size = MediaQuery.of(context).size;
