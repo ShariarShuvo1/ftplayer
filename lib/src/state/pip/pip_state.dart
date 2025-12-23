@@ -11,6 +11,11 @@ class PipState {
     this.videoTitle,
     this.contentItemJson,
     this.position = const Offset(16, 100),
+    this.currentVideoUrl,
+    this.currentSeasonNumber,
+    this.currentEpisodeNumber,
+    this.currentEpisodeId,
+    this.currentEpisodeTitle,
   });
 
   final bool isActive;
@@ -20,6 +25,11 @@ class PipState {
   final String? videoTitle;
   final Map<String, dynamic>? contentItemJson;
   final Offset position;
+  final String? currentVideoUrl;
+  final int? currentSeasonNumber;
+  final int? currentEpisodeNumber;
+  final String? currentEpisodeId;
+  final String? currentEpisodeTitle;
 
   PipState copyWith({
     bool? isActive,
@@ -29,6 +39,11 @@ class PipState {
     String? videoTitle,
     Map<String, dynamic>? contentItemJson,
     Offset? position,
+    String? currentVideoUrl,
+    int? currentSeasonNumber,
+    int? currentEpisodeNumber,
+    String? currentEpisodeId,
+    String? currentEpisodeTitle,
   }) {
     return PipState(
       isActive: isActive ?? this.isActive,
@@ -38,6 +53,11 @@ class PipState {
       videoTitle: videoTitle ?? this.videoTitle,
       contentItemJson: contentItemJson ?? this.contentItemJson,
       position: position ?? this.position,
+      currentVideoUrl: currentVideoUrl ?? this.currentVideoUrl,
+      currentSeasonNumber: currentSeasonNumber ?? this.currentSeasonNumber,
+      currentEpisodeNumber: currentEpisodeNumber ?? this.currentEpisodeNumber,
+      currentEpisodeId: currentEpisodeId ?? this.currentEpisodeId,
+      currentEpisodeTitle: currentEpisodeTitle ?? this.currentEpisodeTitle,
     );
   }
 

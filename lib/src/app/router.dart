@@ -11,6 +11,7 @@ import '../features/auth/presentation/profile_screen.dart';
 import '../features/ftp_servers/presentation/server_scan_screen.dart';
 import '../features/content_details/presentation/content_details_screen.dart';
 import '../features/watch_history/presentation/watch_history_screen.dart';
+import '../features/search/presentation/search_result_screen.dart';
 import '../features/home/data/home_models.dart';
 import '../state/auth/auth_controller.dart';
 
@@ -89,6 +90,13 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: WatchHistoryScreen.path,
         builder: (context, state) => const WatchHistoryScreen(),
+      ),
+      GoRoute(
+        path: SearchResultScreen.path,
+        builder: (context, state) {
+          final query = state.extra as String? ?? '';
+          return SearchResultScreen(initialQuery: query);
+        },
       ),
     ],
   );

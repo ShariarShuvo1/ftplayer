@@ -5,10 +5,12 @@ import 'package:go_router/go_router.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/widgets/app_scaffold.dart';
 import '../../../core/widgets/right_drawer.dart';
+import '../../../core/widgets/search_overlay.dart';
 import '../../../state/watch_history/watch_history_provider.dart';
 import '../data/watch_history_models.dart';
 import '../../../features/home/data/home_models.dart';
 import '../../../features/content_details/presentation/content_details_screen.dart';
+import '../../../features/search/presentation/search_result_screen.dart';
 import 'widgets/watch_history_list_item.dart';
 
 class WatchHistoryScreen extends ConsumerStatefulWidget {
@@ -24,6 +26,8 @@ class _WatchHistoryScreenState extends ConsumerState<WatchHistoryScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   int _currentPage = 1;
+  bool _showSearch = false;
+  String _searchText = '';
 
   final List<WatchStatus> statuses = [
     WatchStatus.watching,
@@ -49,12 +53,38 @@ class _WatchHistoryScreenState extends ConsumerState<WatchHistoryScreen>
     super.dispose();
   }
 
+  void _toggleSearch() {
+    setState(() {
+      _showSearch = !_showSearch;
+    });
+  }
+
+  void _handleSearch(String query) {
+    setState(() {
+      _showSearch = false;
+    });
+    context.push(SearchResultScreen.path, extra: query);
+  }
+
+  void _handleSearchClose(String query) {
+    setState(() {
+      _showSearch = false;
+      _searchText = query;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
       title: 'Watch History',
       endDrawer: const RightDrawer(),
       actions: [
+        IconButton(
+          tooltip: 'Search',
+          onPressed: _toggleSearch,
+          icon: const Icon(Icons.search),
+          color: AppColors.primary,
+        ),
         Builder(
           builder: (context) {
             return IconButton(
@@ -115,11 +145,23 @@ class _WatchHistoryScreenState extends ConsumerState<WatchHistoryScreen>
         ),
       ),
       padding: EdgeInsets.zero,
-      body: TabBarView(
-        controller: _tabController,
-        children: statuses.map((status) {
-          return _buildWatchHistoryList(status);
-        }).toList(),
+      body: Stack(
+        children: [
+          TabBarView(
+            controller: _tabController,
+            children: statuses.map((status) {
+              return _buildWatchHistoryList(status);
+            }).toList(),
+          ),
+          if (_showSearch)
+            Positioned.fill(
+              child: SearchOverlay(
+                onClose: _handleSearchClose,
+                onSearch: _handleSearch,
+                initialQuery: _searchText,
+              ),
+            ),
+        ],
       ),
     );
   }
