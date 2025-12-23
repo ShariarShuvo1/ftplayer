@@ -16,6 +16,7 @@ class PipNotifier extends StateNotifier<PipState> {
     required String videoUrl,
     required String videoTitle,
     Map<String, dynamic>? contentItemJson,
+    Offset? initialPosition,
   }) {
     _logger.d('Activating PiP: $videoTitle');
 
@@ -26,7 +27,7 @@ class PipNotifier extends StateNotifier<PipState> {
       videoUrl: videoUrl,
       videoTitle: videoTitle,
       contentItemJson: contentItemJson,
-      position: state.position,
+      position: initialPosition ?? const Offset(16, 100),
     );
   }
 
