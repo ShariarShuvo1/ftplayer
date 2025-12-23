@@ -1,5 +1,4 @@
 import 'package:dio/dio.dart';
-import 'package:logger/logger.dart';
 
 import 'watch_history_models.dart';
 
@@ -7,7 +6,6 @@ class WatchHistoryApi {
   WatchHistoryApi(this.dio);
 
   final Dio dio;
-  final _logger = Logger();
 
   Future<WatchHistoryResponse> updateWatchProgress({
     required String ftpServerId,
@@ -41,10 +39,8 @@ class WatchHistoryApi {
       if (metadata != null) data['metadata'] = metadata;
 
       final res = await dio.post('/watch-history/progress', data: data);
-      _logger.d('Updated watch progress: ${res.data}');
       return WatchHistoryResponse.fromJson(res.data as Map<String, dynamic>);
     } catch (e) {
-      _logger.e('Error updating watch progress', error: e);
       rethrow;
     }
   }
@@ -58,10 +54,8 @@ class WatchHistoryApi {
         '/watch-history/status/$id',
         data: {'status': status},
       );
-      _logger.d('Updated content status: ${res.data}');
       return WatchHistoryResponse.fromJson(res.data as Map<String, dynamic>);
     } catch (e) {
-      _logger.e('Error updating content status', error: e);
       rethrow;
     }
   }
@@ -75,16 +69,13 @@ class WatchHistoryApi {
         '/watch-history/content',
         queryParameters: {'ftpServerId': ftpServerId, 'contentId': contentId},
       );
-      _logger.d('Fetched content watch history: ${res.data}');
       return WatchHistoryResponse.fromJson(res.data as Map<String, dynamic>);
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) {
         return null;
       }
-      _logger.e('Error fetching content watch history', error: e);
       rethrow;
     } catch (e) {
-      _logger.e('Error fetching content watch history', error: e);
       rethrow;
     }
   }
@@ -92,9 +83,7 @@ class WatchHistoryApi {
   Future<void> deleteWatchHistory(String id) async {
     try {
       await dio.delete('/watch-history/$id');
-      _logger.d('Deleted watch history: $id');
     } catch (e) {
-      _logger.e('Error deleting watch history', error: e);
       rethrow;
     }
   }
@@ -116,12 +105,10 @@ class WatchHistoryApi {
       if (ftpServerId != null) params['ftpServerId'] = ftpServerId;
 
       final res = await dio.get('/watch-history', queryParameters: params);
-      _logger.d('Fetched watch history: ${res.data}');
       return WatchHistoryListResponse.fromJson(
         res.data as Map<String, dynamic>,
       );
     } catch (e) {
-      _logger.e('Error fetching watch history', error: e);
       rethrow;
     }
   }

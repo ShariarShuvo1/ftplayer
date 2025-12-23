@@ -3,8 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:logger/logger.dart';
-
 import '../../../app/theme/app_colors.dart';
 import '../../../state/content/content_details_provider.dart';
 import '../../../state/pip/pip_provider.dart';
@@ -17,8 +15,6 @@ import 'widgets/watch_status_dropdown.dart';
 import 'widgets/content_details_section.dart';
 import 'widgets/seasons_section.dart';
 import 'widgets/comments_section.dart';
-
-final _logger = Logger();
 
 class ContentDetailsScreen extends ConsumerStatefulWidget {
   const ContentDetailsScreen({required this.contentItem, super.key});
@@ -55,9 +51,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
     if (widget.contentItem.initialProgress != null) {
       _initialPosition = widget.contentItem.initialProgress;
-      _logger.d(
-        'Initial progress from ContentItem: ${_initialPosition?.inSeconds}s',
-      );
     }
 
     final pipState = ref.read(pipProvider);
@@ -69,7 +62,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       try {
         final pipContentItem = ContentItem.fromJson(pipState.contentItemJson!);
         if (pipContentItem.id == widget.contentItem.id) {
-          _logger.d('Receiving player from PiP - same content');
           _receivedPlayer = pipState.player;
           _receivedVideoController = pipState.videoController;
 
@@ -77,13 +69,12 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
             ref.read(pipProvider.notifier).deactivatePip(disposePlayer: false);
           });
         } else {
-          _logger.d('Closing PiP - different content');
           Future.microtask(() {
             ref.read(pipProvider.notifier).deactivatePip(disposePlayer: true);
           });
         }
       } catch (e) {
-        _logger.e('Error checking PiP content: $e');
+        // Ignore errors when processing PiP state
       }
     }
   }
@@ -92,7 +83,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     if (_receivedPlayer != null && _receivedVideoController != null) {
       final videoPlayerState = _videoPlayerKey.currentState;
       if (videoPlayerState != null) {
-        _logger.d('Notifying video player of received ownership');
         videoPlayerState.receiveOwnership(
           _receivedPlayer!,
           _receivedVideoController!,
@@ -151,7 +141,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     final threshold = MediaQuery.of(context).size.height * 0.5;
 
     if (_dragOffset > threshold) {
-      _logger.d('Drag ended above threshold: activating PiP');
       _activatePipMode();
     } else {
       setState(() {
@@ -213,27 +202,18 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
   void _activatePipMode() async {
     if (_activatedPipFromHere) {
-      _logger.d('PiP already activated in this session');
       return;
     }
 
-    _logger.d('Attempting to activate PiP mode');
     final videoPlayerState = _videoPlayerKey.currentState;
-    _logger.d('Video player state: $videoPlayerState');
-    _logger.d('Player: ${videoPlayerState?.player}');
-    _logger.d('Controller: ${videoPlayerState?.videoController}');
 
     if (videoPlayerState == null) {
-      _logger.e('Video player state is null');
       _resetDragState();
       return;
     }
 
     if (videoPlayerState.player == null ||
         videoPlayerState.videoController == null) {
-      _logger.e('Player or controller is null');
-      _logger.d('Player null: ${videoPlayerState.player == null}');
-      _logger.d('Controller null: ${videoPlayerState.videoController == null}');
       _resetDragState();
       return;
     }
@@ -243,25 +223,10 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
       String videoUrl = _currentVideoUrl ?? '';
 
-      if (videoUrl.isEmpty && videoPlayerState.player != null) {
-        try {
-          final playerState = videoPlayerState.player!.state;
-          if (playerState.playing && playerState.position != Duration.zero) {
-            _logger.d('Player is playing, attempting to get current media URI');
-          }
-        } catch (e) {
-          _logger.d('Could not get URI from player state: $e');
-        }
-      }
-
       if (videoUrl.isEmpty) {
-        _logger.w('Video URL is empty, cannot activate PiP');
-        _logger.d('_currentVideoUrl: $_currentVideoUrl');
         _resetDragState();
         return;
       }
-
-      _logger.d('🎬 Activating PiP: $title with url: $videoUrl');
 
       final screenWidth = MediaQuery.of(context).size.width;
       const pipWidth = 180.0;
@@ -282,7 +247,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
             initialPosition: initialPosition,
           );
 
-      _logger.d('🎬 Activating PiP state set, now transferring ownership...');
       videoPlayerState.transferOwnership();
 
       setState(() {
@@ -290,19 +254,14 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       });
 
       try {
-        _logger.d('🎬 Resuming playback in PiP...');
         await videoPlayerState.player!.play();
-        _logger.d('🎬 Playback resumed successfully');
       } catch (e) {
-        _logger.w('🎬 Could not resume playback in PiP: $e');
+        // Ignore errors when playing video
       }
-
-      _logger.d('🎬 Popping back to previous screen');
       if (mounted) {
         Navigator.of(context).pop();
       }
     } catch (e) {
-      _logger.e('Error activating PiP: $e');
       _resetDragState();
     }
   }
@@ -327,16 +286,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
     return PopScope(
       canPop: true,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop) {
-          final pipState = ref.read(pipProvider);
-          if (pipState.isActive && _activatedPipFromHere) {
-            _logger.d(
-              'Navigating back with active PiP - player should be restored',
-            );
-          }
-        }
-      },
+      onPopInvokedWithResult: (didPop, result) {},
       child: Scaffold(
         backgroundColor: AppColors.black,
         body: detailsAsync.when(
@@ -448,7 +398,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       if (_currentVideoUrl == null && videoUrl != null && videoUrl.isNotEmpty) {
         setState(() {
           _currentVideoUrl = videoUrl;
-          _logger.d('Stored current video URL: $_currentVideoUrl');
         });
       }
     });
@@ -513,11 +462,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                       final watchHistory = watchHistoryAsync.value!;
                       Duration? position;
 
-                      _logger.d(
-                        'Looking for episode position - Season: $_currentSeasonNumber, '
-                        'Episode: $_currentEpisodeNumber',
-                      );
-
                       if (_currentSeasonNumber != null &&
                           _currentEpisodeNumber != null &&
                           details.isSeries &&
@@ -531,10 +475,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
                         if (seasonIndex != -1) {
                           final season = details.seasons![seasonIndex];
-                          _logger.d(
-                            'Found matching season from FTP. Episodes: '
-                            '${season.episodes.length}',
-                          );
 
                           if (season.episodes.isNotEmpty) {
                             final matchingEpisode = season.episodes.where((ep) {
@@ -545,10 +485,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                             }).firstOrNull;
 
                             if (matchingEpisode != null) {
-                              _logger.d(
-                                'Episode $_currentEpisodeNumber found from FTP server',
-                              );
-
                               if (watchHistory.seriesProgress != null &&
                                   watchHistory.seriesProgress!.isNotEmpty) {
                                 try {
@@ -574,37 +510,14 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                                           .currentTime
                                           .toInt(),
                                     );
-                                    _logger.d(
-                                      'Using progress from backend: '
-                                      '${position.inSeconds}s',
-                                    );
                                   }
                                 } catch (e) {
-                                  _logger.d(
-                                    'No progress found for this episode in backend',
-                                  );
+                                  // Ignore errors when extracting episode progress
                                 }
                               }
-                            } else {
-                              _logger.w(
-                                'Episode $_currentEpisodeNumber not found in '
-                                'season $_currentSeasonNumber from FTP server',
-                              );
                             }
-                          } else {
-                            _logger.w(
-                              'Season $_currentSeasonNumber has no episodes',
-                            );
                           }
-                        } else {
-                          _logger.w(
-                            'Season $_currentSeasonNumber not found from FTP server',
-                          );
                         }
-                      } else {
-                        _logger.d(
-                          'Cannot lookup episode - details or seasons unavailable',
-                        );
                       }
 
                       if (position == null &&
@@ -612,9 +525,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                           watchHistory.progress!.currentTime > 0) {
                         position = Duration(
                           seconds: watchHistory.progress!.currentTime.toInt(),
-                        );
-                        _logger.d(
-                          'Using video progress: ${position.inSeconds}s',
                         );
                       }
 
@@ -815,9 +725,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       });
     }
 
-    _logger.d(
-      '🎬 Switching episode: S$seasonNumber E$episodeNumber - URL: ${episode.link}',
-    );
     setState(() {
       _currentVideoUrl = episode.link;
       _currentSeasonNumber = seasonNumber;
@@ -985,7 +892,6 @@ class _VideoPlayerWidgetWrapperState extends State<_VideoPlayerWidgetWrapper> {
   }
 
   void transferOwnership() {
-    _logger.d('🎬 Transferring ownership to PiP');
     setState(() {
       _ownershipTransferred = true;
     });
@@ -993,7 +899,6 @@ class _VideoPlayerWidgetWrapperState extends State<_VideoPlayerWidgetWrapper> {
     final state = _videoPlayerWidgetKey.currentState;
     if (state != null &&
         state.runtimeType.toString() == '_VideoPlayerWidgetState') {
-      _logger.d('🎬 Notifying nested player state to transfer ownership');
       (state as dynamic).transferOwnership();
     }
   }

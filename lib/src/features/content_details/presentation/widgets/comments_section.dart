@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:logger/logger.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
 import '../../../../app/theme/app_colors.dart';
 import '../../../../state/auth/auth_controller.dart';
 import '../../../../state/comments/comment_provider.dart';
 import '../../../comments/data/comment_models.dart';
-
-final _logger = Logger();
 
 class CommentsSection extends ConsumerStatefulWidget {
   const CommentsSection({
@@ -142,7 +139,6 @@ class _CommentsSectionState extends ConsumerState<CommentsSection>
                     ),
                   ),
                   error: (error, _) {
-                    _logger.e('Error loading comments: $error');
                     return Padding(
                       padding: const EdgeInsets.all(16),
                       child: Text(
@@ -547,7 +543,6 @@ class _CommentsSectionState extends ConsumerState<CommentsSection>
         _editingCommentId = null;
       });
     } catch (e) {
-      _logger.e('Error submitting comment: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -612,7 +607,6 @@ class _CommentsSectionState extends ConsumerState<CommentsSection>
         )),
       );
     } catch (e) {
-      _logger.e('Error deleting comment: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

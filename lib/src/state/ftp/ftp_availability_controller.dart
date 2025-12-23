@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:logger/logger.dart';
 
 import '../../features/ftp_servers/data/ftp_server_models.dart';
 import '../../features/ftp_servers/data/ftp_server_repository.dart';
@@ -124,7 +123,6 @@ class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
 
   final FtpServerRepository repository;
   final Ref ref;
-  final _logger = Logger();
   final Dio _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 3),
@@ -137,9 +135,7 @@ class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
     try {
       state = state.copyWith(isScanning: true, hasError: false);
 
-      _logger.i('Starting FTP server availability check');
       final servers = await repository.getAllPublicServers();
-      _logger.i('Fetched ${servers.length} FTP servers from database');
 
       if (servers.isEmpty) {
         state = state.copyWith(
@@ -183,7 +179,6 @@ class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
 
       state = state.copyWith(isScanning: false, isComplete: true);
     } catch (e) {
-      _logger.e('Error in availability check', error: e);
       state = state.copyWith(
         isScanning: false,
         hasError: true,

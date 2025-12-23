@@ -44,6 +44,27 @@ class VideoPlayerWidget extends StatefulWidget {
   State<VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
 }
 
+class _VideoSurface extends StatefulWidget {
+  const _VideoSurface({required super.key, required this.controller});
+
+  final VideoController controller;
+
+  @override
+  State<_VideoSurface> createState() => _VideoSurfaceState();
+}
+
+class _VideoSurfaceState extends State<_VideoSurface>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return Video(controller: widget.controller, controls: NoVideoControls);
+  }
+
+  @override
+  bool get wantKeepAlive => true;
+}
+
 class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   late Player _player;
   late VideoController _videoController;
@@ -55,12 +76,19 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   bool _isDisposing = false;
   bool _ownershipTransferred = false;
   bool _isFullscreen = false;
-  Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _isPlaying = false;
   Timer? _controlsTimer;
   Timer? _progressTimer;
   Duration _lastPosition = Duration.zero;
+  final Duration _positionUpdateThrottle = const Duration(milliseconds: 200);
+  DateTime _lastUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+  Duration _lastProgressReportPosition = Duration.zero;
+  final ValueNotifier<Duration> _positionNotifier = ValueNotifier(
+    Duration.zero,
+  );
+  bool _isDraggingSlider = false;
+  double _dragPositionMillis = 0.0;
 
   Player? get player => _player;
   VideoController? get videoController => _videoController;
@@ -95,7 +123,8 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     try {
       _hasError = false;
       _errorMessage = null;
-      _position = Duration.zero;
+      _lastPosition = Duration.zero;
+      _positionNotifier.value = Duration.zero;
       _duration = Duration.zero;
       _isPlaying = false;
       _isBuffering = false;
@@ -112,7 +141,6 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
       setState(() {
         _hasError = false;
-        _position = Duration.zero;
       });
 
       if (widget.initialPosition != null &&
@@ -163,15 +191,21 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
       _player.stream.position.listen((position) {
         if (mounted && !_isDisposing) {
-          final positionDiff = (position.inSeconds - _lastPosition.inSeconds)
-              .abs();
-          if (positionDiff > 3) {
+          _lastPosition = position;
+
+          final progressDiff =
+              (position.inSeconds - _lastProgressReportPosition.inSeconds)
+                  .abs();
+          if (progressDiff > 3) {
+            _lastProgressReportPosition = position;
             _notifyProgressUpdate();
           }
-          setState(() {
-            _position = position;
-            _lastPosition = position;
-          });
+
+          final now = DateTime.now();
+          if (now.difference(_lastUiUpdate) >= _positionUpdateThrottle) {
+            _lastUiUpdate = now;
+            _positionNotifier.value = position;
+          }
         }
       });
 
@@ -196,10 +230,11 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
       setState(() {
         _isInitialized = true;
-        _position = _player.state.position;
         _duration = _player.state.duration;
         _isPlaying = _player.state.playing;
       });
+      _lastPosition = _player.state.position;
+      _positionNotifier.value = _lastPosition;
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -234,9 +269,12 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
       _player.stream.position.listen((position) {
         if (mounted && !_isDisposing) {
-          setState(() {
-            _position = position;
-          });
+          _lastPosition = position;
+          final now = DateTime.now();
+          if (now.difference(_lastUiUpdate) >= _positionUpdateThrottle) {
+            _lastUiUpdate = now;
+            _positionNotifier.value = position;
+          }
         }
       });
 
@@ -315,6 +353,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
       }
       WakelockPlus.disable();
     }
+    _positionNotifier.dispose();
     super.dispose();
   }
 
@@ -393,7 +432,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   void _notifyProgressUpdate() {
     if (widget.onProgressUpdate != null && _duration.inSeconds > 0) {
       widget.onProgressUpdate!(
-        _position.inSeconds.toDouble(),
+        _lastPosition.inSeconds.toDouble(),
         _duration.inSeconds.toDouble(),
       );
     }
@@ -468,9 +507,9 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
         child: Stack(
           children: [
             Center(
-              child: Video(
+              child: _VideoSurface(
+                key: const ValueKey('video_surface'),
                 controller: _videoController,
-                controls: NoVideoControls,
               ),
             ),
             if (_isBuffering)
@@ -496,165 +535,186 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
               ),
             if (_showControls && !_isBuffering)
               Positioned.fill(
+                child: Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          icon: const Icon(
+                            Icons.replay_10,
+                            color: Colors.white,
+                            size: 28,
+                          ),
+                          onPressed: () {
+                            final newPosition =
+                                _lastPosition - const Duration(seconds: 10);
+                            _player.seek(
+                              newPosition < Duration.zero
+                                  ? Duration.zero
+                                  : newPosition,
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 32),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          icon: Icon(
+                            _isPlaying ? Icons.pause : Icons.play_arrow,
+                            color: Colors.white,
+                            size: 36,
+                          ),
+                          iconSize: 48,
+                          padding: const EdgeInsets.all(12),
+                          onPressed: _togglePlayPause,
+                        ),
+                      ),
+                      const SizedBox(width: 32),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          icon: const Icon(
+                            Icons.forward_10,
+                            color: Colors.white,
+                            size: 28,
+                          ),
+                          onPressed: () {
+                            final newPosition =
+                                _lastPosition + const Duration(seconds: 10);
+                            _player.seek(
+                              newPosition > _duration ? _duration : newPosition,
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+            if (_showControls && !_isBuffering)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 12,
                   ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      const Expanded(child: SizedBox()),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.5),
-                              shape: BoxShape.circle,
-                            ),
-                            child: IconButton(
-                              icon: const Icon(
-                                Icons.replay_10,
-                                color: Colors.white,
-                                size: 28,
-                              ),
-                              onPressed: () {
-                                final newPosition =
-                                    _position - const Duration(seconds: 10);
-                                _player.seek(
-                                  newPosition < Duration.zero
-                                      ? Duration.zero
-                                      : newPosition,
-                                );
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 32),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: AppColors.primary,
-                              shape: BoxShape.circle,
-                            ),
-                            child: IconButton(
-                              icon: Icon(
-                                _isPlaying ? Icons.pause : Icons.play_arrow,
-                                color: Colors.white,
-                                size: 36,
-                              ),
-                              iconSize: 48,
-                              padding: const EdgeInsets.all(12),
-                              onPressed: _togglePlayPause,
-                            ),
-                          ),
-                          const SizedBox(width: 32),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.5),
-                              shape: BoxShape.circle,
-                            ),
-                            child: IconButton(
-                              icon: const Icon(
-                                Icons.forward_10,
-                                color: Colors.white,
-                                size: 28,
-                              ),
-                              onPressed: () {
-                                final newPosition =
-                                    _position + const Duration(seconds: 10);
-                                _player.seek(
-                                  newPosition > _duration
-                                      ? _duration
-                                      : newPosition,
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 48),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Row(
-                          children: [
-                            Text(
-                              _formatDuration(_position),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      children: [
+                        ValueListenableBuilder<Duration>(
+                          valueListenable: _positionNotifier,
+                          builder: (_, value, _) {
+                            return Text(
+                              _formatDuration(value),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: SliderTheme(
-                                data: SliderThemeData(
-                                  trackHeight: 3,
-                                  thumbShape: const RoundSliderThumbShape(
-                                    enabledThumbRadius: 5,
-                                  ),
-                                  overlayShape: const RoundSliderOverlayShape(
-                                    overlayRadius: 10,
-                                  ),
-                                  activeTrackColor: AppColors.primary,
-                                  inactiveTrackColor: Colors.white.withValues(
-                                    alpha: 0.3,
-                                  ),
-                                  thumbColor: AppColors.primary,
-                                  overlayColor: AppColors.primary.withValues(
-                                    alpha: 0.2,
-                                  ),
-                                ),
-                                child: Slider(
-                                  value: _duration.inMilliseconds > 0
-                                      ? _position.inMilliseconds
-                                            .toDouble()
-                                            .clamp(
-                                              0.0,
-                                              _duration.inMilliseconds
-                                                  .toDouble(),
-                                            )
-                                      : 0.0,
-                                  min: 0.0,
-                                  max: _duration.inMilliseconds > 0
-                                      ? _duration.inMilliseconds.toDouble()
-                                      : 1.0,
-                                  onChanged: (value) {
-                                    _player.seek(
-                                      Duration(milliseconds: value.toInt()),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _formatDuration(_duration),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            IconButton(
-                              icon: Icon(
-                                _isFullscreen
-                                    ? Icons.fullscreen_exit
-                                    : Icons.fullscreen,
-                                color: Colors.white,
-                                size: 22,
-                              ),
-                              padding: const EdgeInsets.all(8),
-                              constraints: const BoxConstraints(),
-                              onPressed: _toggleFullscreen,
-                            ),
-                          ],
+                            );
+                          },
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: SliderTheme(
+                            data: SliderThemeData(
+                              trackHeight: 3,
+                              thumbShape: const RoundSliderThumbShape(
+                                enabledThumbRadius: 5,
+                              ),
+                              overlayShape: const RoundSliderOverlayShape(
+                                overlayRadius: 10,
+                              ),
+                              activeTrackColor: AppColors.primary,
+                              inactiveTrackColor: Colors.white.withValues(
+                                alpha: 0.3,
+                              ),
+                              thumbColor: AppColors.primary,
+                              overlayColor: AppColors.primary.withValues(
+                                alpha: 0.2,
+                              ),
+                            ),
+                            child: Slider(
+                              value: _duration.inMilliseconds > 0
+                                  ? (_isDraggingSlider
+                                            ? _dragPositionMillis
+                                            : _positionNotifier
+                                                  .value
+                                                  .inMilliseconds
+                                                  .toDouble())
+                                        .clamp(
+                                          0.0,
+                                          _duration.inMilliseconds.toDouble(),
+                                        )
+                                  : 0.0,
+                              min: 0.0,
+                              max: _duration.inMilliseconds > 0
+                                  ? _duration.inMilliseconds.toDouble()
+                                  : 1.0,
+                              onChangeStart: (value) {
+                                _isDraggingSlider = true;
+                                _dragPositionMillis = value;
+                              },
+                              onChanged: (value) {
+                                // update local drag value only to avoid continuous seeks
+                                _dragPositionMillis = value;
+                              },
+                              onChangeEnd: (value) async {
+                                // perform a single seek when dragging ends
+                                _isDraggingSlider = false;
+                                final target = Duration(
+                                  milliseconds: value.toInt(),
+                                );
+                                try {
+                                  await _player.seek(target);
+                                } catch (_) {}
+                                _positionNotifier.value = target;
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _formatDuration(_duration),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: Icon(
+                            _isFullscreen
+                                ? Icons.fullscreen_exit
+                                : Icons.fullscreen,
+                            color: Colors.white,
+                            size: 22,
+                          ),
+                          padding: const EdgeInsets.all(8),
+                          constraints: const BoxConstraints(),
+                          onPressed: _toggleFullscreen,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

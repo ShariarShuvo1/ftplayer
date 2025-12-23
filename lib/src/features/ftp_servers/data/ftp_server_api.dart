@@ -1,5 +1,4 @@
 import 'package:dio/dio.dart';
-import 'package:logger/logger.dart';
 
 import 'ftp_server_models.dart';
 
@@ -7,15 +6,12 @@ class FtpServerApi {
   FtpServerApi(this.dio);
 
   final Dio dio;
-  final _logger = Logger();
 
   Future<FtpServersResponse> getAllServers() async {
     try {
       final res = await dio.get('/ftp-servers');
-      _logger.d('Fetched FTP servers: ${res.data}');
       return FtpServersResponse.fromJson(res.data as Map<String, dynamic>);
     } catch (e) {
-      _logger.e('Error fetching servers', error: e);
       rethrow;
     }
   }
@@ -23,10 +19,8 @@ class FtpServerApi {
   Future<FtpServersResponse> getAllPublicServers() async {
     try {
       final res = await dio.get('/ftp-servers/all-public');
-      _logger.d('Fetched all public FTP servers: ${res.data}');
       return FtpServersResponse.fromJson(res.data as Map<String, dynamic>);
     } catch (e) {
-      _logger.e('Error fetching public servers', error: e);
       rethrow;
     }
   }

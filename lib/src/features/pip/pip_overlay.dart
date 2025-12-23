@@ -2,15 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:logger/logger.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/router.dart';
 import '../../state/pip/pip_provider.dart';
 import '../home/data/home_models.dart';
 import '../content_details/presentation/content_details_screen.dart';
-
-final _logger = Logger();
 
 class PipOverlay extends ConsumerStatefulWidget {
   const PipOverlay({super.key});
@@ -63,14 +60,9 @@ class _PipOverlayState extends ConsumerState<PipOverlay> {
   Widget build(BuildContext context) {
     final pipState = ref.watch(pipProvider);
 
-    _logger.d(
-      '🎬 PiP build: isActive=${pipState.isActive}, player=${pipState.player != null}, controller=${pipState.videoController != null}',
-    );
-
     if (!pipState.isActive ||
         pipState.player == null ||
         pipState.videoController == null) {
-      _logger.d('🎬 PiP inactive or null references, hiding overlay');
       _positionInitialized = false;
       return const SizedBox.shrink();
     }
@@ -168,11 +160,8 @@ class _PipOverlayState extends ConsumerState<PipOverlay> {
                         _buildControlButton(
                           icon: Icons.fullscreen,
                           onTap: () {
-                            _logger.d('Fullscreen button tapped');
-
                             final contentItemJson = pipState.contentItemJson;
                             if (contentItemJson == null) {
-                              _logger.w('No content item, deactivating PiP');
                               ref.read(pipProvider.notifier).deactivatePip();
                               return;
                             }
@@ -188,9 +177,6 @@ class _PipOverlayState extends ConsumerState<PipOverlay> {
                                 extra: contentItem,
                               );
                             } catch (e) {
-                              _logger.e(
-                                'Error navigating to content details: $e',
-                              );
                               ref.read(pipProvider.notifier).deactivatePip();
                             }
                           },
@@ -203,7 +189,7 @@ class _PipOverlayState extends ConsumerState<PipOverlay> {
                             try {
                               pipState.player?.pause();
                             } catch (e) {
-                              _logger.w('Error pausing player on close: $e');
+                              // Ignore errors when pausing
                             }
                             ref.read(pipProvider.notifier).deactivatePip();
                           },
@@ -221,25 +207,15 @@ class _PipOverlayState extends ConsumerState<PipOverlay> {
                         final isPlaying = snapshot.data ?? false;
                         return GestureDetector(
                           onTap: () {
-                            _logger.d(
-                              '🎬 Play/pause tapped: isPlaying=$isPlaying',
-                            );
-                            _logger.d(
-                              '🎬 Player valid: ${pipState.player != null}',
-                            );
                             try {
                               if (isPlaying) {
-                                _logger.d('🎬 Attempting to pause...');
                                 pipState.player?.pause();
-                                _logger.d('🎬 Pause successful');
                               } else {
-                                _logger.d('🎬 Attempting to play...');
                                 pipState.player?.play();
-                                _logger.d('🎬 Play successful');
                               }
                               _startHideControlsTimer();
                             } catch (e) {
-                              _logger.e('🎬 PLAYER CONTROL ERROR: $e');
+                              // Ignore errors when toggling playback
                             }
                           },
                           child: Icon(

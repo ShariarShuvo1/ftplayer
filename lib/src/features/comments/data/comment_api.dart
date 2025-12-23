@@ -1,5 +1,4 @@
 import 'package:dio/dio.dart';
-import 'package:logger/logger.dart';
 
 import 'comment_models.dart';
 
@@ -7,7 +6,6 @@ class CommentApi {
   CommentApi(this.dio);
 
   final Dio dio;
-  final _logger = Logger();
 
   Future<CommentResponse> createComment({
     required String ftpServerId,
@@ -28,10 +26,8 @@ class CommentApi {
       };
 
       final res = await dio.post('/comments', data: data);
-      _logger.d('Created comment: ${res.data}');
       return CommentResponse.fromJson(res.data as Map<String, dynamic>);
     } catch (e) {
-      _logger.e('Error creating comment', error: e);
       rethrow;
     }
   }
@@ -52,10 +48,8 @@ class CommentApi {
           'limit': limit,
         },
       );
-      _logger.d('Fetched comments: ${res.data}');
       return CommentListResponse.fromJson(res.data as Map<String, dynamic>);
     } catch (e) {
-      _logger.e('Error fetching comments', error: e);
       rethrow;
     }
   }
@@ -69,10 +63,8 @@ class CommentApi {
         '/comments/user',
         queryParameters: {'page': page, 'limit': limit},
       );
-      _logger.d('Fetched user comments: ${res.data}');
       return CommentListResponse.fromJson(res.data as Map<String, dynamic>);
     } catch (e) {
-      _logger.e('Error fetching user comments', error: e);
       rethrow;
     }
   }
@@ -83,10 +75,8 @@ class CommentApi {
   }) async {
     try {
       final res = await dio.put('/comments/$id', data: {'comment': comment});
-      _logger.d('Updated comment: ${res.data}');
       return CommentResponse.fromJson(res.data as Map<String, dynamic>);
     } catch (e) {
-      _logger.e('Error updating comment', error: e);
       rethrow;
     }
   }
@@ -94,9 +84,7 @@ class CommentApi {
   Future<void> deleteComment(String id) async {
     try {
       await dio.delete('/comments/$id');
-      _logger.d('Deleted comment: $id');
     } catch (e) {
-      _logger.e('Error deleting comment', error: e);
       rethrow;
     }
   }

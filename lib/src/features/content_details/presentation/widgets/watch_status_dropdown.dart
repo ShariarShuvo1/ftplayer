@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:logger/logger.dart';
 
 import '../../../../app/theme/app_colors.dart';
 import '../../../../state/watch_history/watch_history_provider.dart';
 import '../../../watch_history/data/watch_history_models.dart';
-
-final _logger = Logger();
 
 class WatchStatusDropdown extends ConsumerStatefulWidget {
   const WatchStatusDropdown({
@@ -130,14 +127,12 @@ class _WatchStatusDropdownState extends ConsumerState<WatchStatusDropdown> {
         ),
       ),
       error: (error, _) {
-        _logger.e('Error loading watch history: $error');
         return const SizedBox.shrink();
       },
     );
   }
 
   Future<void> _initializeWatchHistory() async {
-    _logger.d('Initializing watch history with watching status');
     setState(() {
       _isUpdating = true;
     });
@@ -162,7 +157,7 @@ class _WatchStatusDropdownState extends ConsumerState<WatchStatusDropdown> {
         )),
       );
     } catch (e) {
-      _logger.e('Error initializing watch history: $e');
+      // Error handled in finally block
     } finally {
       if (mounted) {
         setState(() {
@@ -176,8 +171,6 @@ class _WatchStatusDropdownState extends ConsumerState<WatchStatusDropdown> {
     WatchHistory? existingHistory,
     WatchStatus newStatus,
   ) async {
-    _logger.d('Updating watch status to: ${newStatus.value}');
-
     setState(() {
       _isUpdating = true;
     });
@@ -208,7 +201,7 @@ class _WatchStatusDropdownState extends ConsumerState<WatchStatusDropdown> {
         )),
       );
     } catch (e) {
-      _logger.e('Error updating watch status: $e');
+      // Error handled in finally block
     } finally {
       if (mounted) {
         setState(() {
