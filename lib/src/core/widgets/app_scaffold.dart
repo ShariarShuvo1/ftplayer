@@ -39,6 +39,7 @@ class AppScaffold extends StatelessWidget {
               leading: leading,
               actions: actions,
               bottom: bottom,
+              iconTheme: const IconThemeData(color: AppColors.primary),
             ),
       endDrawer: endDrawer,
       body: SafeArea(

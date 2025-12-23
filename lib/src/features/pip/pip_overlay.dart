@@ -61,9 +61,14 @@ class _PipOverlayState extends ConsumerState<PipOverlay> {
   Widget build(BuildContext context) {
     final pipState = ref.watch(pipProvider);
 
+    _logger.d(
+      '🎬 PiP build: isActive=${pipState.isActive}, player=${pipState.player != null}, controller=${pipState.videoController != null}',
+    );
+
     if (!pipState.isActive ||
         pipState.player == null ||
         pipState.videoController == null) {
+      _logger.d('🎬 PiP inactive or null references, hiding overlay');
       return const SizedBox.shrink();
     }
 
@@ -187,7 +192,11 @@ class _PipOverlayState extends ConsumerState<PipOverlay> {
                         _buildControlButton(
                           icon: Icons.close,
                           onTap: () {
-                            pipState.player?.pause();
+                            try {
+                              pipState.player?.pause();
+                            } catch (e) {
+                              _logger.w('Error pausing player on close: $e');
+                            }
                             ref.read(pipProvider.notifier).deactivatePip();
                           },
                           size: 20,
@@ -195,7 +204,7 @@ class _PipOverlayState extends ConsumerState<PipOverlay> {
                       ],
                     ),
                   ),
-                if (_showControls)
+                if (_showControls && pipState.player != null)
                   Center(
                     child: StreamBuilder<bool>(
                       stream: pipState.player!.stream.playing,
@@ -204,12 +213,26 @@ class _PipOverlayState extends ConsumerState<PipOverlay> {
                         final isPlaying = snapshot.data ?? false;
                         return GestureDetector(
                           onTap: () {
-                            if (isPlaying) {
-                              pipState.player!.pause();
-                            } else {
-                              pipState.player!.play();
+                            _logger.d(
+                              '🎬 Play/pause tapped: isPlaying=$isPlaying',
+                            );
+                            _logger.d(
+                              '🎬 Player valid: ${pipState.player != null}',
+                            );
+                            try {
+                              if (isPlaying) {
+                                _logger.d('🎬 Attempting to pause...');
+                                pipState.player?.pause();
+                                _logger.d('🎬 Pause successful');
+                              } else {
+                                _logger.d('🎬 Attempting to play...');
+                                pipState.player?.play();
+                                _logger.d('🎬 Play successful');
+                              }
+                              _startHideControlsTimer();
+                            } catch (e) {
+                              _logger.e('🎬 PLAYER CONTROL ERROR: $e');
                             }
-                            _startHideControlsTimer();
                           },
                           child: Icon(
                             isPlaying ? Icons.pause : Icons.play_arrow,

@@ -12,7 +12,9 @@ class VideoPlayerWidget extends StatefulWidget {
   const VideoPlayerWidget({
     required this.videoUrl,
     this.autoPlay = true,
+    this.initialPosition,
     this.onFullscreenChanged,
+    this.onProgressUpdate,
     super.key,
   }) : player = null,
        videoController = null,
@@ -22,17 +24,21 @@ class VideoPlayerWidget extends StatefulWidget {
     required this.player,
     required this.videoController,
     this.onFullscreenChanged,
+    this.onProgressUpdate,
     super.key,
   }) : videoUrl = '',
        autoPlay = false,
+       initialPosition = null,
        _isFromExisting = true;
 
   final String videoUrl;
   final bool autoPlay;
+  final Duration? initialPosition;
   final Player? player;
   final VideoController? videoController;
   final bool _isFromExisting;
   final void Function(bool)? onFullscreenChanged;
+  final void Function(double currentTime, double duration)? onProgressUpdate;
 
   @override
   State<VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
@@ -53,6 +59,8 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   Duration _duration = Duration.zero;
   bool _isPlaying = false;
   Timer? _controlsTimer;
+  Timer? _progressTimer;
+  Duration _lastPosition = Duration.zero;
 
   Player? get player => _player;
   VideoController? get videoController => _videoController;
@@ -69,6 +77,60 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
       _setupExistingPlayer();
     } else {
       _initializePlayer();
+    }
+  }
+
+  @override
+  void didUpdateWidget(VideoPlayerWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget._isFromExisting &&
+        oldWidget.videoUrl != widget.videoUrl &&
+        widget.videoUrl.isNotEmpty &&
+        _isInitialized) {
+      _reloadVideo();
+    }
+  }
+
+  Future<void> _reloadVideo() async {
+    try {
+      _hasError = false;
+      _errorMessage = null;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _isPlaying = false;
+      _isBuffering = false;
+
+      final media = Media(
+        widget.videoUrl,
+        httpHeaders: {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Mobile)',
+          'Connection': 'keep-alive',
+          'Accept-Encoding': 'gzip, deflate',
+        },
+      );
+      await _player.open(media);
+
+      setState(() {
+        _hasError = false;
+        _position = Duration.zero;
+      });
+
+      if (widget.initialPosition != null &&
+          widget.initialPosition!.inSeconds > 0) {
+        await _player.seek(widget.initialPosition!);
+      }
+
+      if (widget.autoPlay) {
+        await _player.play();
+        WakelockPlus.enable();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+          _errorMessage = e.toString();
+        });
+      }
     }
   }
 
@@ -101,8 +163,14 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
       _player.stream.position.listen((position) {
         if (mounted && !_isDisposing) {
+          final positionDiff = (position.inSeconds - _lastPosition.inSeconds)
+              .abs();
+          if (positionDiff > 3) {
+            _notifyProgressUpdate();
+          }
           setState(() {
             _position = position;
+            _lastPosition = position;
           });
         }
       });
@@ -117,9 +185,11 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
             if (_showControls) {
               _startControlsTimer();
             }
+            _startProgressTimer();
           } else {
             WakelockPlus.disable();
             _cancelControlsTimer();
+            _cancelProgressTimer();
           }
         }
       });
@@ -183,15 +253,35 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
           setState(() {
             _isPlaying = playing;
           });
+          if (playing) {
+            _startProgressTimer();
+          } else {
+            _cancelProgressTimer();
+          }
         }
       });
 
-      await _player.open(Media(widget.videoUrl));
+      await _player.open(
+        Media(
+          widget.videoUrl,
+          httpHeaders: {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Mobile)',
+            'Connection': 'keep-alive',
+            'Accept-Encoding': 'gzip, deflate',
+          },
+        ),
+        play: false,
+      );
 
       if (mounted) {
         setState(() {
           _isInitialized = true;
         });
+
+        if (widget.initialPosition != null &&
+            widget.initialPosition!.inSeconds > 0) {
+          await _player.seek(widget.initialPosition!);
+        }
 
         if (widget.autoPlay) {
           await _player.play();
@@ -211,6 +301,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   @override
   void dispose() {
     _cancelControlsTimer();
+    _cancelProgressTimer();
     if (_isFullscreen) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -285,6 +376,27 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   void _cancelControlsTimer() {
     _controlsTimer?.cancel();
     _controlsTimer = null;
+  }
+
+  void _startProgressTimer() {
+    _cancelProgressTimer();
+    _progressTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _notifyProgressUpdate();
+    });
+  }
+
+  void _cancelProgressTimer() {
+    _progressTimer?.cancel();
+    _progressTimer = null;
+  }
+
+  void _notifyProgressUpdate() {
+    if (widget.onProgressUpdate != null && _duration.inSeconds > 0) {
+      widget.onProgressUpdate!(
+        _position.inSeconds.toDouble(),
+        _duration.inSeconds.toDouble(),
+      );
+    }
   }
 
   String _formatDuration(Duration duration) {

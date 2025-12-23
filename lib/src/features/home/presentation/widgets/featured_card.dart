@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shimmer_animation/shimmer_animation.dart';
 import 'package:go_router/go_router.dart';
 
@@ -7,17 +8,21 @@ import '../../../../app/theme/app_colors.dart';
 import '../../../content_details/presentation/content_details_screen.dart';
 import '../../data/home_models.dart';
 
-class FeaturedCard extends StatelessWidget {
+class FeaturedCard extends ConsumerWidget {
   const FeaturedCard({required this.content, super.key});
 
   final ContentItem content;
 
+  void _navigate(BuildContext context) {
+    if (context.mounted) {
+      context.push(ContentDetailsScreen.path, extra: content);
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return GestureDetector(
-      onTap: () {
-        context.push(ContentDetailsScreen.path, extra: content);
-      },
+      onTap: () => _navigate(context),
       child: Container(
         margin: const EdgeInsets.only(right: 16),
         width: MediaQuery.of(context).size.width * 0.85,
