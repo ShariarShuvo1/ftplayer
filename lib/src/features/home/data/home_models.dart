@@ -10,6 +10,10 @@ class ContentItem {
     this.rating,
     this.contentType,
     this.description,
+    this.initialSeasonNumber,
+    this.initialEpisodeNumber,
+    this.initialEpisodeId,
+    this.initialProgress,
   });
 
   final String id;
@@ -22,6 +26,10 @@ class ContentItem {
   final double? rating;
   final String? contentType;
   final String? description;
+  final int? initialSeasonNumber;
+  final int? initialEpisodeNumber;
+  final String? initialEpisodeId;
+  final Duration? initialProgress;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -34,6 +42,10 @@ class ContentItem {
     'rating': rating,
     'contentType': contentType,
     'description': description,
+    'initialSeasonNumber': initialSeasonNumber,
+    'initialEpisodeNumber': initialEpisodeNumber,
+    'initialEpisodeId': initialEpisodeId,
+    'initialProgress': initialProgress?.inSeconds,
   };
 
   factory ContentItem.fromJson(Map<String, dynamic> json) {
@@ -48,6 +60,12 @@ class ContentItem {
       rating: json['rating'] as double?,
       contentType: json['contentType'] as String?,
       description: json['description'] as String?,
+      initialSeasonNumber: json['initialSeasonNumber'] as int?,
+      initialEpisodeNumber: json['initialEpisodeNumber'] as int?,
+      initialEpisodeId: json['initialEpisodeId'] as String?,
+      initialProgress: json['initialProgress'] != null
+          ? Duration(seconds: json['initialProgress'] as int)
+          : null,
     );
   }
 

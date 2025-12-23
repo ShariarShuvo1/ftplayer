@@ -8,9 +8,14 @@ import 'package:logger/logger.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../state/content/content_details_provider.dart';
 import '../../../state/pip/pip_provider.dart';
+import '../../../state/ftp/working_ftp_servers_provider.dart';
+import '../../../state/watch_history/watch_history_provider.dart';
 import '../../home/data/home_models.dart';
 import '../data/content_details_models.dart';
 import 'widgets/video_player_widget.dart';
+import 'widgets/watch_status_dropdown.dart';
+import 'widgets/content_details_section.dart';
+import 'widgets/seasons_section.dart';
 
 final _logger = Logger();
 
@@ -30,17 +35,29 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     with SingleTickerProviderStateMixin {
   TabController? _tabController;
   String? _currentVideoUrl;
+  int? _currentSeasonNumber;
+  int? _currentEpisodeNumber;
+  String? _currentEpisodeId;
+  String? _currentEpisodeTitle;
   double _dragOffset = 0.0;
   bool _isDragging = false;
   bool _activatedPipFromHere = false;
   Player? _receivedPlayer;
   VideoController? _receivedVideoController;
   bool _isVideoPlayerFullscreen = false;
+  Duration? _initialPosition;
   final GlobalKey<_VideoPlayerWidgetWrapperState> _videoPlayerKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
+
+    if (widget.contentItem.initialProgress != null) {
+      _initialPosition = widget.contentItem.initialProgress;
+      _logger.d(
+        'Initial progress from ContentItem: ${_initialPosition?.inSeconds}s',
+      );
+    }
 
     final pipState = ref.read(pipProvider);
     if (!_activatedPipFromHere &&
@@ -85,6 +102,36 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     }
   }
 
+  void _selectInitialEpisode(ContentDetails details) {
+    if (_currentVideoUrl == null &&
+        widget.contentItem.initialSeasonNumber != null &&
+        widget.contentItem.initialEpisodeNumber != null &&
+        details.isSeries &&
+        details.seasons != null) {
+      final season = details.seasons!.firstWhere((s) {
+        final seasonNum = _extractSeasonNumber(s.seasonName);
+        return seasonNum == widget.contentItem.initialSeasonNumber;
+      }, orElse: () => details.seasons!.first);
+
+      if (season.episodes.isNotEmpty) {
+        final episode =
+            season.episodes[(widget.contentItem.initialEpisodeNumber! - 1)
+                .clamp(0, season.episodes.length - 1)];
+
+        setState(() {
+          _currentVideoUrl = episode.link;
+          _currentEpisodeTitle = episode.title;
+        });
+      }
+    }
+  }
+
+  int _extractSeasonNumber(String seasonName) {
+    final regex = RegExp(r'\d+');
+    final match = regex.firstMatch(seasonName);
+    return match != null ? int.parse(match.group(0)!) : 0;
+  }
+
   @override
   void dispose() {
     _tabController?.dispose();
@@ -100,9 +147,10 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   }
 
   void _handleVerticalDragEnd(DragEndDetails details) {
-    final threshold = MediaQuery.of(context).size.height * 0.3;
+    final threshold = MediaQuery.of(context).size.height * 0.5;
 
     if (_dragOffset > threshold) {
+      _logger.d('Drag ended above threshold: activating PiP');
       _activatePipMode();
     } else {
       setState(() {
@@ -112,26 +160,107 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     }
   }
 
-  void _activatePipMode() {
+  Widget _buildDragProgressIndicator() {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final threshold = screenHeight * 0.5;
+    final progress = (_dragOffset / threshold).clamp(0.0, 1.0);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                AppColors.primary.withValues(alpha: 0.95),
+                AppColors.primary.withValues(alpha: 0.85),
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withValues(alpha: 0.5),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              SizedBox.expand(
+                child: CustomPaint(
+                  painter: _CircleProgressPainter(
+                    progress: progress,
+                    strokeWidth: 2.5,
+                    backgroundColor: Colors.white.withValues(alpha: 0.15),
+                    progressColor: Colors.white,
+                  ),
+                ),
+              ),
+              Icon(Icons.arrow_downward, color: Colors.white, size: 20),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _activatePipMode() async {
+    if (_activatedPipFromHere) {
+      _logger.d('PiP already activated in this session');
+      return;
+    }
+
     _logger.d('Attempting to activate PiP mode');
     final videoPlayerState = _videoPlayerKey.currentState;
+    _logger.d('Video player state: $videoPlayerState');
+    _logger.d('Player: ${videoPlayerState?.player}');
+    _logger.d('Controller: ${videoPlayerState?.videoController}');
 
-    if (videoPlayerState != null &&
-        videoPlayerState.player != null &&
-        videoPlayerState.videoController != null) {
-      final detailsAsync = ref.read(
-        contentDetailsProvider((
-          contentId: widget.contentItem.id,
-          serverName: widget.contentItem.serverName,
-          serverType: widget.contentItem.serverType,
-          initialData: null,
-        )),
-      );
+    if (videoPlayerState == null) {
+      _logger.e('Video player state is null');
+      _resetDragState();
+      return;
+    }
 
-      final title = detailsAsync.value?.title ?? widget.contentItem.title;
-      final videoUrl = _currentVideoUrl ?? detailsAsync.value?.videoUrl ?? '';
+    if (videoPlayerState.player == null ||
+        videoPlayerState.videoController == null) {
+      _logger.e('Player or controller is null');
+      _logger.d('Player null: ${videoPlayerState.player == null}');
+      _logger.d('Controller null: ${videoPlayerState.videoController == null}');
+      _resetDragState();
+      return;
+    }
 
-      _logger.d('Activating PiP: $title');
+    try {
+      final title = widget.contentItem.title;
+
+      String videoUrl = _currentVideoUrl ?? '';
+
+      if (videoUrl.isEmpty && videoPlayerState.player != null) {
+        try {
+          final playerState = videoPlayerState.player!.state;
+          if (playerState.playing && playerState.position != Duration.zero) {
+            _logger.d('Player is playing, attempting to get current media URI');
+          }
+        } catch (e) {
+          _logger.d('Could not get URI from player state: $e');
+        }
+      }
+
+      if (videoUrl.isEmpty) {
+        _logger.w('Video URL is empty, cannot activate PiP');
+        _logger.d('_currentVideoUrl: $_currentVideoUrl');
+        _resetDragState();
+        return;
+      }
+
+      _logger.d('🎬 Activating PiP: $title with url: $videoUrl');
 
       ref
           .read(pipProvider.notifier)
@@ -143,20 +272,36 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
             contentItemJson: widget.contentItem.toJson(),
           );
 
+      _logger.d('🎬 Activating PiP state set, now transferring ownership...');
       videoPlayerState.transferOwnership();
 
       setState(() {
         _activatedPipFromHere = true;
       });
 
-      Navigator.of(context).pop();
-    } else {
-      _logger.w('Cannot activate PiP - missing player or controller');
-      setState(() {
-        _dragOffset = 0.0;
-        _isDragging = false;
-      });
+      try {
+        _logger.d('🎬 Resuming playback in PiP...');
+        await videoPlayerState.player!.play();
+        _logger.d('🎬 Playback resumed successfully');
+      } catch (e) {
+        _logger.w('🎬 Could not resume playback in PiP: $e');
+      }
+
+      _logger.d('🎬 Popping back to previous screen');
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      _logger.e('Error activating PiP: $e');
+      _resetDragState();
     }
+  }
+
+  void _resetDragState() {
+    setState(() {
+      _dragOffset = 0.0;
+      _isDragging = false;
+    });
   }
 
   @override
@@ -170,101 +315,118 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       )),
     );
 
-    return Scaffold(
-      backgroundColor: AppColors.black,
-      body: Stack(
-        children: [
-          detailsAsync.when(
-            data: (details) => GestureDetector(
-              onVerticalDragUpdate: _handleVerticalDragUpdate,
-              onVerticalDragEnd: _handleVerticalDragEnd,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                transform: Matrix4.translationValues(0, _dragOffset, 0),
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 200),
-                  opacity: _isDragging ? 0.9 - (_dragOffset / 1000) : 1.0,
-                  child: _buildContent(details),
-                ),
-              ),
-            ),
-            loading: () => const Center(
-              child: CircularProgressIndicator(color: AppColors.primary),
-            ),
-            error: (error, stack) => Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.error_outline,
-                    color: AppColors.danger,
-                    size: 64,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Failed to load content',
-                    style: TextStyle(color: AppColors.textMid, fontSize: 16),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    error.toString(),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: AppColors.textLow,
-                      fontSize: 12,
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          final pipState = ref.read(pipProvider);
+          if (pipState.isActive && _activatedPipFromHere) {
+            _logger.d(
+              'Navigating back with active PiP - player should be restored',
+            );
+          }
+        }
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.black,
+        body: detailsAsync.when(
+          data: (details) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _selectInitialEpisode(details);
+            });
+            return Stack(
+              children: [
+                GestureDetector(
+                  onVerticalDragUpdate: _handleVerticalDragUpdate,
+                  onVerticalDragEnd: _handleVerticalDragEnd,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    transform: Matrix4.translationValues(0, _dragOffset, 0),
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 200),
+                      opacity: _isDragging ? 0.9 - (_dragOffset / 1000) : 1.0,
+                      child: _buildContent(details),
                     ),
                   ),
-                ],
-              ),
-            ),
+                ),
+                if (_isDragging && _dragOffset > 0)
+                  Positioned(
+                    top: 60.0,
+                    left: 0,
+                    right: 0,
+                    child: GestureDetector(
+                      onVerticalDragUpdate: (_) {},
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Center(child: _buildDragProgressIndicator()),
+                          const SizedBox(height: 16),
+                          Center(
+                            child: AnimatedOpacity(
+                              opacity:
+                                  _dragOffset >
+                                      MediaQuery.of(context).size.height * 0.5
+                                  ? 1.0
+                                  : 0.6,
+                              duration: const Duration(milliseconds: 150),
+                              child: Text(
+                                _dragOffset >
+                                        MediaQuery.of(context).size.height * 0.5
+                                    ? 'Release to activate PiP'
+                                    : 'Keep dragging',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  shadows: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.6,
+                                      ),
+                                      blurRadius: 8,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+          loading: () => const Center(
+            child: CircularProgressIndicator(color: AppColors.primary),
           ),
-          if (_isDragging && _dragOffset > 100)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 20,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.9),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primary.withValues(alpha: 0.3),
-                        blurRadius: 16,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.picture_in_picture_alt,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _dragOffset > MediaQuery.of(context).size.height * 0.3
-                            ? 'Release for PiP mode'
-                            : 'Drag down for PiP',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+          error: (error, stack) => Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.error_outline,
+                  color: AppColors.danger,
+                  size: 64,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Failed to load content',
+                  style: TextStyle(color: AppColors.textMid, fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  error.toString(),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppColors.textLow,
+                    fontSize: 12,
                   ),
                 ),
-              ),
+              ],
             ),
-        ],
+          ),
+        ),
       ),
     );
   }
@@ -272,11 +434,37 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   Widget _buildContent(ContentDetails details) {
     final videoUrl = _currentVideoUrl ?? details.videoUrl;
 
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_currentVideoUrl == null && videoUrl != null && videoUrl.isNotEmpty) {
+        setState(() {
+          _currentVideoUrl = videoUrl;
+          _logger.d('Stored current video URL: $_currentVideoUrl');
+        });
+      }
+    });
+
     if (details.isSeries && details.seasons != null) {
-      _tabController ??= TabController(
-        length: details.seasons!.length,
-        vsync: this,
-      );
+      if (_tabController == null) {
+        int initialIndex = 0;
+        if (widget.contentItem.initialSeasonNumber != null &&
+            details.seasons != null) {
+          final seasonIndex = details.seasons!.indexWhere((season) {
+            final seasonNum = _extractSeasonNumber(season.seasonName);
+            return seasonNum == widget.contentItem.initialSeasonNumber;
+          });
+          if (seasonIndex >= 0) {
+            initialIndex = seasonIndex;
+            _currentSeasonNumber = widget.contentItem.initialSeasonNumber;
+            _currentEpisodeNumber = widget.contentItem.initialEpisodeNumber;
+            _currentEpisodeId = widget.contentItem.initialEpisodeId;
+          }
+        }
+        _tabController = TabController(
+          length: details.seasons!.length,
+          vsync: this,
+          initialIndex: initialIndex,
+        );
+      }
     }
 
     return Column(
@@ -289,15 +477,173 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     _notifyPlayerReceived();
                   });
+                  final workingServersAsync = ref.watch(
+                    workingFtpServersProvider,
+                  );
+                  final serverId = workingServersAsync.maybeWhen(
+                    data: (servers) => servers
+                        .where((s) => s.name == widget.contentItem.serverName)
+                        .firstOrNull
+                        ?.id,
+                    orElse: () => null,
+                  );
+
+                  Duration? resolvedInitialPosition = _initialPosition;
+
+                  if (serverId != null) {
+                    final watchHistoryAsync = ref.watch(
+                      contentWatchHistoryProvider((
+                        ftpServerId: serverId,
+                        contentId: widget.contentItem.id,
+                      )),
+                    );
+
+                    if (watchHistoryAsync.hasValue &&
+                        watchHistoryAsync.value != null) {
+                      final watchHistory = watchHistoryAsync.value!;
+                      Duration? position;
+
+                      _logger.d(
+                        'Looking for episode position - Season: $_currentSeasonNumber, '
+                        'Episode: $_currentEpisodeNumber',
+                      );
+
+                      if (_currentSeasonNumber != null &&
+                          _currentEpisodeNumber != null &&
+                          details.isSeries &&
+                          details.seasons != null &&
+                          details.seasons!.isNotEmpty) {
+                        final seasonIndex = details.seasons!.indexWhere(
+                          (s) =>
+                              _extractSeasonNumber(s.seasonName) ==
+                              _currentSeasonNumber,
+                        );
+
+                        if (seasonIndex != -1) {
+                          final season = details.seasons![seasonIndex];
+                          _logger.d(
+                            'Found matching season from FTP. Episodes: '
+                            '${season.episodes.length}',
+                          );
+
+                          if (season.episodes.isNotEmpty) {
+                            final matchingEpisode = season.episodes.where((ep) {
+                              final episodeNum = int.tryParse(
+                                ep.title.split('E').last.split(' ').first,
+                              );
+                              return episodeNum == _currentEpisodeNumber;
+                            }).firstOrNull;
+
+                            if (matchingEpisode != null) {
+                              _logger.d(
+                                'Episode $_currentEpisodeNumber found from FTP server',
+                              );
+
+                              if (watchHistory.seriesProgress != null &&
+                                  watchHistory.seriesProgress!.isNotEmpty) {
+                                try {
+                                  final backendSeason = watchHistory
+                                      .seriesProgress!
+                                      .firstWhere(
+                                        (s) =>
+                                            s.seasonNumber ==
+                                            _currentSeasonNumber,
+                                      );
+
+                                  final backendEpisode = backendSeason.episodes
+                                      .firstWhere(
+                                        (e) =>
+                                            e.episodeNumber ==
+                                            _currentEpisodeNumber,
+                                      );
+
+                                  if (backendEpisode.progress.currentTime > 0) {
+                                    position = Duration(
+                                      seconds: backendEpisode
+                                          .progress
+                                          .currentTime
+                                          .toInt(),
+                                    );
+                                    _logger.d(
+                                      'Using progress from backend: '
+                                      '${position.inSeconds}s',
+                                    );
+                                  }
+                                } catch (e) {
+                                  _logger.d(
+                                    'No progress found for this episode in backend',
+                                  );
+                                }
+                              }
+                            } else {
+                              _logger.w(
+                                'Episode $_currentEpisodeNumber not found in '
+                                'season $_currentSeasonNumber from FTP server',
+                              );
+                            }
+                          } else {
+                            _logger.w(
+                              'Season $_currentSeasonNumber has no episodes',
+                            );
+                          }
+                        } else {
+                          _logger.w(
+                            'Season $_currentSeasonNumber not found from FTP server',
+                          );
+                        }
+                      } else {
+                        _logger.d(
+                          'Cannot lookup episode - details or seasons unavailable',
+                        );
+                      }
+
+                      if (position == null &&
+                          watchHistory.progress != null &&
+                          watchHistory.progress!.currentTime > 0) {
+                        position = Duration(
+                          seconds: watchHistory.progress!.currentTime.toInt(),
+                        );
+                        _logger.d(
+                          'Using video progress: ${position.inSeconds}s',
+                        );
+                      }
+
+                      if (position != null) {
+                        resolvedInitialPosition = position;
+                      }
+                    }
+                  }
+
                   return _VideoPlayerWidgetWrapper(
                     key: _videoPlayerKey,
                     videoUrl: videoUrl,
                     autoPlay: true,
+                    initialPosition: resolvedInitialPosition,
                     receivedPlayer: _receivedPlayer,
                     receivedController: _receivedVideoController,
                     onFullscreenChanged: (isFullscreen) {
                       setState(() {
                         _isVideoPlayerFullscreen = isFullscreen;
+                      });
+                    },
+                    onProgressUpdate: (currentTime, duration) {
+                      final workingServersAsync = ref.read(
+                        workingFtpServersProvider,
+                      );
+                      workingServersAsync.whenData((servers) {
+                        final server = servers
+                            .where(
+                              (s) => s.name == widget.contentItem.serverName,
+                            )
+                            .firstOrNull;
+                        if (server != null) {
+                          _handleProgressUpdate(
+                            details,
+                            server.id,
+                            currentTime,
+                            duration,
+                          );
+                        }
                       });
                     },
                   );
@@ -350,167 +696,20 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           child: CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        details.title,
-                        style: const TextStyle(
-                          color: AppColors.textHigh,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          if (details.year != null) ...[
-                            Text(
-                              details.year!,
-                              style: const TextStyle(
-                                color: AppColors.textMid,
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            const Text(
-                              '•',
-                              style: TextStyle(
-                                color: AppColors.textMid,
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
-                          if (details.quality != null) ...[
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.primary.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                details.quality!,
-                                style: const TextStyle(
-                                  color: AppColors.primary,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
-                          if (details.watchTime != null) ...[
-                            const Text(
-                              '•',
-                              style: TextStyle(
-                                color: AppColors.textMid,
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              details.watchTime!,
-                              style: const TextStyle(
-                                color: AppColors.textMid,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                          if (details.rating != null) ...[
-                            const SizedBox(width: 8),
-                            const Text(
-                              '•',
-                              style: TextStyle(
-                                color: AppColors.textMid,
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            const Icon(
-                              Icons.star,
-                              color: AppColors.warning,
-                              size: 16,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              details.rating!.toStringAsFixed(1),
-                              style: const TextStyle(
-                                color: AppColors.textMid,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      if (details.description != null &&
-                          details.description!.isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        Text(
-                          details.description!,
-                          style: const TextStyle(
-                            color: AppColors.textMid,
-                            fontSize: 14,
-                            height: 1.5,
-                          ),
-                        ),
-                      ],
-                      if (details.tags != null && details.tags!.isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: details.tags!
-                              .split(',')
-                              .where((tag) => tag.trim().isNotEmpty)
-                              .map(
-                                (tag) => Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.surface,
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Text(
-                                    tag.trim(),
-                                    style: const TextStyle(
-                                      color: AppColors.textLow,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      ],
-                    ],
-                  ),
+                child: ContentDetailsSection(
+                  details: details,
+                  onWatchStatusDropdown: _buildWatchStatusDropdown,
                 ),
               ),
-              if (details.isSeries && details.seasons != null) ...[
-                SliverPersistentHeader(
-                  pinned: true,
-                  delegate: _SeasonTabBarDelegate(
+              if (details.isSeries && details.seasons != null)
+                SliverToBoxAdapter(
+                  child: SeasonsSection(
+                    details: details,
                     tabController: _tabController!,
-                    seasons: details.seasons!,
+                    currentVideoUrl: _currentVideoUrl,
+                    onEpisodeTap: _handleEpisodeTap,
                   ),
                 ),
-                SliverFillRemaining(
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: details.seasons!
-                        .map((season) => _buildEpisodeList(season))
-                        .toList(),
-                  ),
-                ),
-              ],
             ],
           ),
         ),
@@ -518,200 +717,153 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     );
   }
 
-  Widget _buildEpisodeList(Season season) {
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: season.episodes.length,
-      itemBuilder: (context, index) {
-        final episode = season.episodes[index];
-        final isPlaying = _currentVideoUrl == episode.link;
-        final episodeNumber = index + 1;
+  void _handleEpisodeTap(
+    Season season,
+    int seasonNumber,
+    int episodeNumber,
+    Episode episode,
+  ) {
+    final workingServersAsync = ref.read(workingFtpServersProvider);
+    final serverId = workingServersAsync.maybeWhen(
+      data: (servers) => servers
+          .where((s) => s.name == widget.contentItem.serverName)
+          .firstOrNull
+          ?.id,
+      orElse: () => null,
+    );
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: isPlaying
-                ? AppColors.primary.withValues(alpha: 0.1)
-                : AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: isPlaying
-                  ? AppColors.primary.withValues(alpha: 0.3)
-                  : Colors.transparent,
-              width: 1,
-            ),
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: () {
-                setState(() {
-                  _currentVideoUrl = episode.link;
-                });
-              },
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: isPlaying
-                            ? AppColors.primary
-                            : AppColors.surfaceAlt,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Center(
-                        child: isPlaying
-                            ? const Icon(
-                                Icons.pause,
-                                color: AppColors.black,
-                                size: 24,
-                              )
-                            : Text(
-                                episodeNumber.toString(),
-                                style: const TextStyle(
-                                  color: AppColors.textMid,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            episode.title,
-                            style: TextStyle(
-                              color: isPlaying
-                                  ? AppColors.primary
-                                  : AppColors.textHigh,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              height: 1.3,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          if (isPlaying) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.play_circle_filled,
-                                  size: 14,
-                                  color: AppColors.primary.withValues(
-                                    alpha: 0.8,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Now Playing',
-                                  style: TextStyle(
-                                    color: AppColors.primary.withValues(
-                                      alpha: 0.8,
-                                    ),
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Icon(
-                      isPlaying ? Icons.volume_up : Icons.play_circle_outline,
-                      color: isPlaying ? AppColors.primary : AppColors.textLow,
-                      size: 24,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+    if (serverId != null) {
+      final detailsAsync = ref.read(
+        contentDetailsProvider((
+          contentId: widget.contentItem.id,
+          serverName: widget.contentItem.serverName,
+          serverType: widget.contentItem.serverType,
+          initialData: null,
+        )),
+      );
+
+      detailsAsync.whenData((details) {
+        _saveCurrentProgress(details, serverId);
+      });
+    }
+
+    final newEpisodeId =
+        '${widget.contentItem.id}_s${seasonNumber}_e$episodeNumber';
+
+    Duration? newPosition;
+    if (serverId != null) {
+      final watchHistoryAsync = ref.read(
+        contentWatchHistoryProvider((
+          ftpServerId: serverId,
+          contentId: widget.contentItem.id,
+        )),
+      );
+
+      watchHistoryAsync.whenData((watchHistory) {
+        if (watchHistory != null) {
+          for (final season in watchHistory.seriesProgress ?? []) {
+            final ep = season.episodes.firstWhere(
+              (e) => e.episodeId == newEpisodeId,
+              orElse: () => season.episodes.first,
+            );
+            if (ep.episodeId == newEpisodeId) {
+              newPosition = Duration(seconds: ep.progress.currentTime.toInt());
+              break;
+            }
+          }
+        }
+      });
+    }
+
+    _logger.d(
+      '🎬 Switching episode: S$seasonNumber E$episodeNumber - URL: ${episode.link}',
+    );
+    setState(() {
+      _currentVideoUrl = episode.link;
+      _currentSeasonNumber = seasonNumber;
+      _currentEpisodeNumber = episodeNumber;
+      _currentEpisodeId = newEpisodeId;
+      _currentEpisodeTitle = episode.title;
+      _initialPosition = newPosition;
+    });
+  }
+
+  Widget _buildWatchStatusDropdown(ContentDetails details) {
+    final workingServersAsync = ref.watch(workingFtpServersProvider);
+
+    return workingServersAsync.when(
+      data: (servers) {
+        final server = servers
+            .where((s) => s.name == widget.contentItem.serverName)
+            .firstOrNull;
+
+        if (server == null) {
+          return const SizedBox.shrink();
+        }
+
+        return WatchStatusDropdown(
+          ftpServerId: server.id,
+          serverType: widget.contentItem.serverType,
+          contentType: details.contentType,
+          contentId: widget.contentItem.id,
+          contentTitle: details.title,
+          metadata: {
+            'serverName': widget.contentItem.serverName,
+            'posterUrl': details.posterUrl,
+            'year': details.year,
+            'quality': details.quality,
+          },
         );
       },
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
     );
   }
-}
 
-class _SeasonTabBarDelegate extends SliverPersistentHeaderDelegate {
-  _SeasonTabBarDelegate({required this.tabController, required this.seasons});
+  void _saveCurrentProgress(ContentDetails details, String serverId) {
+    final videoPlayerState = _videoPlayerKey.currentState;
+    if (videoPlayerState == null) return;
 
-  final TabController tabController;
-  final List<Season> seasons;
+    final player = videoPlayerState.player;
+    final videoController = videoPlayerState.videoController;
 
-  @override
-  double get minExtent => 56;
+    if (player == null || videoController == null) return;
 
-  @override
-  double get maxExtent => 56;
+    final currentTime = player.state.position.inSeconds.toDouble();
+    final duration = player.state.duration.inSeconds.toDouble();
 
-  @override
-  Widget build(
-    BuildContext context,
-    double shrinkOffset,
-    bool overlapsContent,
+    if (duration <= 0) return;
+
+    _handleProgressUpdate(details, serverId, currentTime, duration);
+  }
+
+  void _handleProgressUpdate(
+    ContentDetails details,
+    String serverId,
+    double currentTime,
+    double duration,
   ) {
-    return Container(
-      height: 56,
-      decoration: const BoxDecoration(
-        color: AppColors.black,
-        border: Border(
-          bottom: BorderSide(color: AppColors.outline, width: 0.5),
-        ),
-      ),
-      child: TabBar(
-        controller: tabController,
-        isScrollable: true,
-        tabAlignment: TabAlignment.start,
-        indicatorSize: TabBarIndicatorSize.tab,
-        indicator: BoxDecoration(
-          color: AppColors.primary.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.primary, width: 1.5),
-        ),
-        dividerColor: Colors.transparent,
-        labelColor: AppColors.primary,
-        unselectedLabelColor: AppColors.textMid,
-        labelStyle: const TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.3,
-        ),
-        unselectedLabelStyle: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-        ),
-        labelPadding: const EdgeInsets.symmetric(horizontal: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        tabs: seasons
-            .map(
-              (season) => Tab(
-                height: 32,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  alignment: Alignment.center,
-                  child: Text(season.seasonName),
-                ),
-              ),
-            )
-            .toList(),
-      ),
-    );
-  }
-
-  @override
-  bool shouldRebuild(covariant SliverPersistentHeaderDelegate oldDelegate) {
-    return false;
+    ref
+        .read(watchHistoryNotifierProvider.notifier)
+        .updateProgress(
+          ftpServerId: serverId,
+          serverType: widget.contentItem.serverType,
+          contentType: details.contentType,
+          contentId: widget.contentItem.id,
+          contentTitle: details.title,
+          currentTime: currentTime,
+          duration: duration,
+          seasonNumber: _currentSeasonNumber,
+          episodeNumber: _currentEpisodeNumber,
+          episodeId: _currentEpisodeId,
+          episodeTitle: _currentEpisodeTitle,
+          metadata: {
+            'serverName': widget.contentItem.serverName,
+            'posterUrl': details.posterUrl,
+            'year': details.year,
+            'quality': details.quality,
+          },
+        );
   }
 }
 
@@ -719,17 +871,21 @@ class _VideoPlayerWidgetWrapper extends StatefulWidget {
   const _VideoPlayerWidgetWrapper({
     required this.videoUrl,
     this.autoPlay = true,
+    this.initialPosition,
     this.receivedPlayer,
     this.receivedController,
     this.onFullscreenChanged,
+    this.onProgressUpdate,
     super.key,
   });
 
   final String videoUrl;
   final bool autoPlay;
+  final Duration? initialPosition;
   final Player? receivedPlayer;
   final VideoController? receivedController;
   final void Function(bool)? onFullscreenChanged;
+  final void Function(double currentTime, double duration)? onProgressUpdate;
 
   @override
   State<_VideoPlayerWidgetWrapper> createState() =>
@@ -737,59 +893,68 @@ class _VideoPlayerWidgetWrapper extends StatefulWidget {
 }
 
 class _VideoPlayerWidgetWrapperState extends State<_VideoPlayerWidgetWrapper> {
-  final GlobalKey _playerKey = GlobalKey();
   bool _ownershipTransferred = false;
   Player? _receivedPlayer;
   VideoController? _receivedController;
+  String? _currentVideoUrl;
+  final GlobalKey<State<VideoPlayerWidget>> _videoPlayerWidgetKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _receivedPlayer = widget.receivedPlayer;
     _receivedController = widget.receivedController;
+    _currentVideoUrl = widget.videoUrl;
+  }
+
+  @override
+  void didUpdateWidget(_VideoPlayerWidgetWrapper oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.videoUrl != oldWidget.videoUrl &&
+        widget.videoUrl != _currentVideoUrl) {
+      _currentVideoUrl = widget.videoUrl;
+      _receivedPlayer = null;
+      _receivedController = null;
+      _ownershipTransferred = false;
+      setState(() {});
+    }
   }
 
   Player? get player {
-    if (_receivedPlayer != null) return _receivedPlayer;
-
-    final state = _playerKey.currentState;
-    if (state != null) {
-      try {
-        return (state as dynamic).player as Player?;
-      } catch (e) {
-        return null;
-      }
+    if (_ownershipTransferred) {
+      return _receivedPlayer;
+    }
+    final state = _videoPlayerWidgetKey.currentState;
+    if (state != null &&
+        state.runtimeType.toString() == '_VideoPlayerWidgetState') {
+      return (state as dynamic).player;
     }
     return null;
   }
 
   VideoController? get videoController {
-    if (_receivedController != null) return _receivedController;
-
-    final state = _playerKey.currentState;
-    if (state != null) {
-      try {
-        return (state as dynamic).videoController as VideoController?;
-      } catch (e) {
-        return null;
-      }
+    if (_ownershipTransferred) {
+      return _receivedController;
+    }
+    final state = _videoPlayerWidgetKey.currentState;
+    if (state != null &&
+        state.runtimeType.toString() == '_VideoPlayerWidgetState') {
+      return (state as dynamic).videoController;
     }
     return null;
   }
 
   void transferOwnership() {
-    final state = _playerKey.currentState;
-    if (state != null) {
-      try {
-        (state as dynamic).transferOwnership();
-        setState(() {
-          _ownershipTransferred = true;
-        });
-      } catch (e) {
-        setState(() {
-          _ownershipTransferred = false;
-        });
-      }
+    _logger.d('🎬 Transferring ownership to PiP');
+    setState(() {
+      _ownershipTransferred = true;
+    });
+
+    final state = _videoPlayerWidgetKey.currentState;
+    if (state != null &&
+        state.runtimeType.toString() == '_VideoPlayerWidgetState') {
+      _logger.d('🎬 Notifying nested player state to transfer ownership');
+      (state as dynamic).transferOwnership();
     }
   }
 
@@ -812,18 +977,69 @@ class _VideoPlayerWidgetWrapperState extends State<_VideoPlayerWidgetWrapper> {
 
     if (_receivedPlayer != null && _receivedController != null) {
       return VideoPlayerWidget.fromExisting(
-        key: _playerKey,
+        key: _videoPlayerWidgetKey,
         player: _receivedPlayer!,
         videoController: _receivedController!,
         onFullscreenChanged: widget.onFullscreenChanged,
+        onProgressUpdate: widget.onProgressUpdate,
       );
     }
 
     return VideoPlayerWidget(
-      key: _playerKey,
+      key: _videoPlayerWidgetKey,
       videoUrl: widget.videoUrl,
       autoPlay: widget.autoPlay,
+      initialPosition: widget.initialPosition,
       onFullscreenChanged: widget.onFullscreenChanged,
+      onProgressUpdate: widget.onProgressUpdate,
     );
+  }
+}
+
+class _CircleProgressPainter extends CustomPainter {
+  _CircleProgressPainter({
+    required this.progress,
+    required this.strokeWidth,
+    required this.backgroundColor,
+    required this.progressColor,
+  });
+
+  final double progress;
+  final double strokeWidth;
+  final Color backgroundColor;
+  final Color progressColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.width / 2) - (strokeWidth / 2);
+
+    final backgroundPaint = Paint()
+      ..color = backgroundColor
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke;
+
+    final progressPaint = Paint()
+      ..color = progressColor
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawCircle(center, radius, backgroundPaint);
+
+    const pi = 3.14159265359;
+    final sweepAngle = progress * 2 * pi;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -pi / 2,
+      sweepAngle,
+      false,
+      progressPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CircleProgressPainter oldDelegate) {
+    return oldDelegate.progress != progress;
   }
 }

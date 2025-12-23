@@ -5,11 +5,16 @@ import 'package:media_kit/media_kit.dart';
 
 import 'src/app/app.dart';
 import 'src/core/config/env.dart';
+import 'src/core/network/network_optimization.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   MediaKit.ensureInitialized();
+
   await dotenv.load(fileName: '.env');
   await Env.initAndroidFallback();
+
+  await NetworkOptimization.optimizeForStreaming();
   runApp(const ProviderScope(child: App()));
 }
