@@ -53,4 +53,13 @@ class AuthRepository {
     final me = await api.me();
     return AuthSession(token: token, user: me.user);
   }
+
+  Future<AuthSession?> restoreSessionOffline() async {
+    final token = await tokenStorage.readToken();
+    if (token == null || token.isEmpty) return null;
+    return AuthSession(
+      token: token,
+      user: UserDto(id: '', name: 'User', email: ''),
+    );
+  }
 }

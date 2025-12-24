@@ -11,62 +11,54 @@ import '../ftp/working_ftp_servers_provider.dart';
 final homeContentProvider = FutureProvider.autoDispose<HomeContentData>((
   ref,
 ) async {
-  final workingServersAsync = ref.watch(workingFtpServersProvider);
+  final workingServersFuture = ref.watch(workingFtpServersProvider.future);
 
-  return workingServersAsync.when(
-    data: (workingServers) async {
-      var servers = workingServers;
+  var servers = await workingServersFuture;
 
-      if (servers.isEmpty) {
-        final publicServersAsync = await ref.read(
-          publicFtpServersProvider.future,
+  if (servers.isEmpty) {
+    final publicServersAsync = await ref.read(publicFtpServersProvider.future);
+    servers = publicServersAsync;
+  }
+
+  if (servers.isEmpty) {
+    return HomeContentData.empty();
+  }
+
+  final featured = <ContentItem>[];
+  final trending = <ContentItem>[];
+  final latest = <ContentItem>[];
+  final tvSeries = <ContentItem>[];
+
+  final dio = Dio();
+
+  for (final server in servers) {
+    if (!server.isActive) {
+      continue;
+    }
+
+    try {
+      if (server.serverType == 'circleftp') {
+        await _fetchCircleFtpContent(
+          dio,
+          server,
+          featured,
+          trending,
+          latest,
+          tvSeries,
         );
-        servers = publicServersAsync;
+      } else if (server.serverType == 'dflix') {
+        await _fetchDflixContent(dio, server, featured, latest, tvSeries);
       }
+    } catch (e) {
+      continue;
+    }
+  }
 
-      if (servers.isEmpty) {
-        return HomeContentData.empty();
-      }
-
-      final featured = <ContentItem>[];
-      final trending = <ContentItem>[];
-      final latest = <ContentItem>[];
-      final tvSeries = <ContentItem>[];
-
-      final dio = Dio();
-
-      for (final server in servers) {
-        if (!server.isActive) {
-          continue;
-        }
-
-        try {
-          if (server.serverType == 'circleftp') {
-            await _fetchCircleFtpContent(
-              dio,
-              server,
-              featured,
-              trending,
-              latest,
-              tvSeries,
-            );
-          } else if (server.serverType == 'dflix') {
-            await _fetchDflixContent(dio, server, featured, latest, tvSeries);
-          }
-        } catch (e) {
-          continue;
-        }
-      }
-
-      return HomeContentData(
-        featured: featured.take(10).toList(),
-        trending: trending.take(20).toList(),
-        latest: latest.take(20).toList(),
-        tvSeries: tvSeries.take(20).toList(),
-      );
-    },
-    loading: () => HomeContentData.empty(),
-    error: (_, _) => HomeContentData.empty(),
+  return HomeContentData(
+    featured: featured.take(10).toList(),
+    trending: trending.take(30).toList(),
+    latest: latest.take(30).toList(),
+    tvSeries: tvSeries.take(30).toList(),
   );
 });
 
@@ -93,17 +85,61 @@ Future<void> _fetchCircleFtpContent(
     final categoryPosts = homeData['categoryPosts'] as List<dynamic>?;
 
     if (categoryPosts != null && categoryPosts.isNotEmpty) {
-      final firstCategory = categoryPosts.first as Map<String, dynamic>;
-      final posts = firstCategory['posts'] as List<dynamic>?;
+      final movieCategories = [
+        'English Movies',
+        'Hindi Movies',
+        'Foreign Language Movies',
+        'English & Foreign Hindi Dubbed Movies',
+        'South Indian Movies',
+        'South Indian Dubbed Movie',
+        'Animation Movies',
+        'Animation Dubbed Movies',
+        'Documentary',
+      ];
 
-      if (posts != null) {
-        for (final item in posts.take(5)) {
-          final contentItem = ContentItem.fromCircleFtp(
-            item as Map<String, dynamic>,
-            imageBaseUrl,
-            server.name,
-          );
-          featured.add(contentItem);
+      final tvCategories = [
+        'English & Foreign TV Series',
+        'Dubbed TV Series & Shows',
+        'Hindi TV Serials',
+        'English & Foreign Anime Series',
+      ];
+
+      for (final category in categoryPosts) {
+        final categoryMap = category as Map<String, dynamic>;
+        final categoryName = categoryMap['name']?.toString() ?? '';
+        final posts = categoryMap['posts'] as List<dynamic>?;
+
+        if (posts == null || posts.isEmpty) continue;
+
+        if (movieCategories.contains(categoryName)) {
+          for (final item in posts.take(3)) {
+            final itemMap = item as Map<String, dynamic>;
+            final type = itemMap['type']?.toString();
+
+            if (type == 'singleVideo') {
+              final contentItem = ContentItem.fromCircleFtp(
+                itemMap,
+                imageBaseUrl,
+                server.name,
+              );
+              featured.add(contentItem);
+              latest.add(contentItem);
+            }
+          }
+        } else if (tvCategories.contains(categoryName)) {
+          for (final item in posts.take(5)) {
+            final itemMap = item as Map<String, dynamic>;
+            final type = itemMap['type']?.toString();
+
+            if (type == 'series') {
+              final contentItem = ContentItem.fromCircleFtp(
+                itemMap,
+                imageBaseUrl,
+                server.name,
+              );
+              tvSeries.add(contentItem);
+            }
+          }
         }
       }
     }
@@ -111,30 +147,17 @@ Future<void> _fetchCircleFtpContent(
     final mostVisitedPosts = homeData['mostVisitedPosts'] as List<dynamic>?;
 
     if (mostVisitedPosts != null) {
-      for (final item in mostVisitedPosts.take(10)) {
-        final contentItem = ContentItem.fromCircleFtp(
-          item as Map<String, dynamic>,
-          imageBaseUrl,
-          server.name,
-        );
-        trending.add(contentItem);
-      }
-    }
+      for (final item in mostVisitedPosts.take(20)) {
+        final itemMap = item as Map<String, dynamic>;
+        final type = itemMap['type']?.toString();
 
-    final latestPost = homeData['latestPost'] as List<dynamic>?;
-
-    if (latestPost != null) {
-      for (final item in latestPost.take(10)) {
-        final contentItem = ContentItem.fromCircleFtp(
-          item as Map<String, dynamic>,
-          imageBaseUrl,
-          server.name,
-        );
-
-        if (contentItem.contentType == 'series') {
-          tvSeries.add(contentItem);
-        } else {
-          latest.add(contentItem);
+        if (type == 'singleVideo' || type == 'series') {
+          final contentItem = ContentItem.fromCircleFtp(
+            itemMap,
+            imageBaseUrl,
+            server.name,
+          );
+          trending.add(contentItem);
         }
       }
     }
@@ -159,25 +182,31 @@ Future<void> _fetchDflixContent(
   final api = DflixApi(dio, baseUrl);
   final imageBaseUrl = '$baseUrl/Admin/main/images';
 
-  final movies = await api.getMovies(limit: 10);
-  for (final movie in movies.take(5)) {
-    final contentItem = ContentItem.fromDflix(
-      movie as Map<String, dynamic>,
-      imageBaseUrl,
-      server.name,
-    );
-    featured.add(contentItem);
-    latest.add(contentItem);
-  }
+  try {
+    final movies = await api.getMovies(limit: 30);
+    for (final movie in movies) {
+      final contentItem = ContentItem.fromDflix(
+        movie as Map<String, dynamic>,
+        imageBaseUrl,
+        server.name,
+      );
+      if (featured.length < 15) {
+        featured.add(contentItem);
+      }
+      latest.add(contentItem);
+    }
 
-  final shows = await api.getTvShows(limit: 10);
-  for (final show in shows) {
-    final contentItem = ContentItem.fromDflix(
-      show as Map<String, dynamic>,
-      imageBaseUrl,
-      server.name,
-    );
-    tvSeries.add(contentItem);
+    final shows = await api.getTvShows(limit: 30);
+    for (final show in shows) {
+      final contentItem = ContentItem.fromDflix(
+        show as Map<String, dynamic>,
+        imageBaseUrl,
+        server.name,
+      );
+      tvSeries.add(contentItem);
+    }
+  } catch (e) {
+    return;
   }
 }
 

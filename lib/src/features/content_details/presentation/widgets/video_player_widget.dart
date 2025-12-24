@@ -89,6 +89,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   );
   bool _isDraggingSlider = false;
   double _dragPositionMillis = 0.0;
+  bool _isSeeking = false;
 
   Player? get player => _player;
   VideoController? get videoController => _videoController;
@@ -678,15 +679,25 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                                 _dragPositionMillis = value;
                               },
                               onChangeEnd: (value) async {
-                                // perform a single seek when dragging ends
+                                // prevent concurrent seeks
+                                if (_isSeeking) {
+                                  return;
+                                }
                                 _isDraggingSlider = false;
+                                _isSeeking = true;
                                 final target = Duration(
                                   milliseconds: value.toInt(),
                                 );
                                 try {
                                   await _player.seek(target);
-                                } catch (_) {}
-                                _positionNotifier.value = target;
+                                  // wait for codec to fully stabilize after seek
+                                  await Future.delayed(
+                                    const Duration(milliseconds: 300),
+                                  );
+                                } catch (_) {
+                                } finally {
+                                  _isSeeking = false;
+                                }
                               },
                             ),
                           ),

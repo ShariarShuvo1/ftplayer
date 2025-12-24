@@ -1,20 +1,27 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:logger/logger.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../state/content/content_details_provider.dart';
 import '../../../state/pip/pip_provider.dart';
 import '../../../state/ftp/working_ftp_servers_provider.dart';
 import '../../../state/watch_history/watch_history_provider.dart';
+import '../../../state/connectivity/connectivity_provider.dart';
+import '../../../state/downloads/download_provider.dart';
 import '../../home/data/home_models.dart';
 import '../data/content_details_models.dart';
 import 'widgets/video_player_widget.dart';
 import 'widgets/watch_status_dropdown.dart';
 import 'widgets/content_details_section.dart';
 import 'widgets/seasons_section.dart';
+import 'widgets/offline_seasons_section.dart';
 import 'widgets/comments_section.dart';
+import 'widgets/download_button.dart';
 
 class ContentDetailsScreen extends ConsumerStatefulWidget {
   const ContentDetailsScreen({required this.contentItem, super.key});
@@ -30,6 +37,8 @@ class ContentDetailsScreen extends ConsumerStatefulWidget {
 
 class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     with SingleTickerProviderStateMixin {
+  final Logger _logger = Logger();
+
   TabController? _tabController;
   String? _currentVideoUrl;
   int? _currentSeasonNumber;
@@ -51,6 +60,23 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
     if (widget.contentItem.initialProgress != null) {
       _initialPosition = widget.contentItem.initialProgress;
+    }
+
+    // Log offline content loading once
+    if (widget.contentItem.initialData != null) {
+      _logger.i(
+        'Loading offline content from metadata: ${widget.contentItem.title}',
+      );
+      try {
+        final details = ContentDetails.fromMetadata(
+          widget.contentItem.initialData!,
+        );
+        _logger.d(
+          'Successfully loaded offline content with ${details.seasons?.length ?? 0} seasons',
+        );
+      } catch (e) {
+        _logger.e('Failed to parse offline metadata during init: $e', error: e);
+      }
     }
 
     final pipState = ref.read(pipProvider);
@@ -116,8 +142,34 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
             season.episodes[(widget.contentItem.initialEpisodeNumber! - 1)
                 .clamp(0, season.episodes.length - 1)];
 
+        final isOffline = ref.read(offlineModeProvider);
+        String resolvedUrl = episode.link;
+
+        if (isOffline) {
+          _logger.i(
+            'Loading offline content: Season ${widget.contentItem.initialSeasonNumber}, Episode ${widget.contentItem.initialEpisodeNumber}',
+          );
+
+          final downloadedContent = ref.read(
+            downloadedContentItemProvider((
+              contentId: widget.contentItem.id,
+              seasonNumber: widget.contentItem.initialSeasonNumber!,
+              episodeNumber: widget.contentItem.initialEpisodeNumber!,
+            )),
+          );
+          if (downloadedContent != null &&
+              downloadedContent.localPath.isNotEmpty) {
+            resolvedUrl = downloadedContent.localPath;
+            _logger.d('Using local file: $resolvedUrl');
+          } else {
+            _logger.w(
+              'Downloaded content not found for episode ${widget.contentItem.initialEpisodeNumber}',
+            );
+          }
+        }
+
         setState(() {
-          _currentVideoUrl = episode.link;
+          _currentVideoUrl = resolvedUrl;
           _currentEpisodeTitle = episode.title;
         });
       }
@@ -128,6 +180,22 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     final regex = RegExp(r'\d+');
     final match = regex.firstMatch(seasonName);
     return match != null ? int.parse(match.group(0)!) : 0;
+  }
+
+  String _resolveVideoUrl(WidgetRef ref, String originalUrl) {
+    final downloadedContent = ref.read(
+      downloadedContentItemProvider((
+        contentId: widget.contentItem.id,
+        seasonNumber: _currentSeasonNumber,
+        episodeNumber: _currentEpisodeNumber,
+      )),
+    );
+
+    if (downloadedContent != null && downloadedContent.localPath.isNotEmpty) {
+      return downloadedContent.localPath;
+    }
+
+    return originalUrl;
   }
 
   @override
@@ -285,14 +353,180 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     });
   }
 
+  ContentDetails _resolveOfflineEpisodeLinks(ContentDetails details) {
+    if (details.seasons == null || details.seasons!.isEmpty) {
+      return details;
+    }
+
+    final updatedSeasons = <Season>[];
+
+    for (
+      int seasonIndex = 0;
+      seasonIndex < details.seasons!.length;
+      seasonIndex++
+    ) {
+      final season = details.seasons![seasonIndex];
+      final seasonNumber = _extractSeasonNumber(season.seasonName);
+      final updatedEpisodes = <Episode>[];
+
+      for (
+        int episodeIndex = 0;
+        episodeIndex < season.episodes.length;
+        episodeIndex++
+      ) {
+        final episode = season.episodes[episodeIndex];
+        final episodeNumber = episodeIndex + 1;
+
+        String resolvedLink = episode.link;
+        final downloadedContent = ref.read(
+          downloadedContentItemProvider((
+            contentId: widget.contentItem.id,
+            seasonNumber: seasonNumber,
+            episodeNumber: episodeNumber,
+          )),
+        );
+
+        if (downloadedContent != null &&
+            downloadedContent.localPath.isNotEmpty) {
+          resolvedLink = downloadedContent.localPath;
+          _logger.d(
+            'Resolved S$seasonNumber E$episodeNumber to: $resolvedLink',
+          );
+        } else {
+          _logger.w(
+            'Could not resolve S$seasonNumber E$episodeNumber - not found in downloads',
+          );
+        }
+
+        updatedEpisodes.add(
+          Episode(
+            title: episode.title,
+            link: resolvedLink,
+            id: episode.id,
+            episodeNumber: episode.episodeNumber,
+          ),
+        );
+      }
+
+      updatedSeasons.add(
+        Season(seasonName: season.seasonName, episodes: updatedEpisodes),
+      );
+    }
+
+    return ContentDetails(
+      id: details.id,
+      title: details.title,
+      posterUrl: details.posterUrl,
+      serverName: details.serverName,
+      serverType: details.serverType,
+      contentType: details.contentType,
+      year: details.year,
+      quality: details.quality,
+      rating: details.rating,
+      description: details.description,
+      watchTime: details.watchTime,
+      tags: details.tags,
+      videoUrl: details.videoUrl,
+      seasons: updatedSeasons,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isOffline = ref.watch(offlineModeProvider);
+    final hasInitialData = widget.contentItem.initialData != null;
+
+    if ((isOffline || hasInitialData) && hasInitialData) {
+      late ContentDetails details;
+      try {
+        details = ContentDetails.fromMetadata(widget.contentItem.initialData!);
+
+        if (details.isSeries && details.seasons != null) {
+          details = _resolveOfflineEpisodeLinks(details);
+        }
+      } catch (e) {
+        _logger.e('Failed to parse offline metadata: $e', error: e);
+        return _buildErrorWidget(
+          'Failed to load offline content',
+          e.toString(),
+        );
+      }
+
+      return PopScope(
+        canPop: true,
+        onPopInvokedWithResult: (didPop, result) {},
+        child: Scaffold(
+          backgroundColor: AppColors.black,
+          body: Stack(
+            children: [
+              GestureDetector(
+                onVerticalDragUpdate: _handleVerticalDragUpdate,
+                onVerticalDragEnd: _handleVerticalDragEnd,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  transform: Matrix4.translationValues(0, _dragOffset, 0),
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 200),
+                    opacity: _isDragging ? 0.9 - (_dragOffset / 1000) : 1.0,
+                    child: _buildOfflineContent(details),
+                  ),
+                ),
+              ),
+              if (_isDragging && _dragOffset > 0)
+                Positioned(
+                  top: 60.0,
+                  left: 0,
+                  right: 0,
+                  child: GestureDetector(
+                    onVerticalDragUpdate: (_) {},
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Center(child: _buildDragProgressIndicator()),
+                        const SizedBox(height: 16),
+                        Center(
+                          child: AnimatedOpacity(
+                            opacity:
+                                _dragOffset >
+                                    MediaQuery.of(context).size.height * 0.5
+                                ? 1.0
+                                : 0.6,
+                            duration: const Duration(milliseconds: 150),
+                            child: Text(
+                              _dragOffset >
+                                      MediaQuery.of(context).size.height * 0.5
+                                  ? 'Release to activate PiP'
+                                  : 'Keep dragging',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                shadows: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.6),
+                                    blurRadius: 8,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final detailsAsync = ref.watch(
       contentDetailsProvider((
         contentId: widget.contentItem.id,
         serverName: widget.contentItem.serverName,
         serverType: widget.contentItem.serverType,
-        initialData: null,
+        initialData: widget.contentItem.initialData,
       )),
     );
 
@@ -400,6 +634,183 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildErrorWidget(String title, String message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, color: AppColors.danger, size: 64),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: const TextStyle(color: AppColors.textMid, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.textLow, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPosterImage(String posterUrl) {
+    final isLocalFile =
+        posterUrl.startsWith('/') || posterUrl.contains('/posters/');
+
+    if (isLocalFile) {
+      final file = File(posterUrl);
+      return Image.file(
+        file,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => const Center(
+          child: Icon(Icons.movie, size: 64, color: AppColors.textLow),
+        ),
+      );
+    }
+
+    return CachedNetworkImage(
+      imageUrl: posterUrl,
+      fit: BoxFit.cover,
+      errorWidget: (context, url, error) => const Center(
+        child: Icon(Icons.movie, size: 64, color: AppColors.textLow),
+      ),
+    );
+  }
+
+  Widget _buildOfflineContent(ContentDetails details) {
+    // For series, select first episode if no video URL yet
+    if (details.isSeries &&
+        details.seasons != null &&
+        details.seasons!.isNotEmpty) {
+      if (_currentVideoUrl == null) {
+        final firstSeason = details.seasons!.first;
+        if (firstSeason.episodes.isNotEmpty) {
+          final firstEpisode = firstSeason.episodes.first;
+          _currentVideoUrl = firstEpisode.link;
+          _currentSeasonNumber ??= _extractSeasonNumber(firstSeason.seasonName);
+          _currentEpisodeNumber ??= firstEpisode.episodeNumber ?? 1;
+          _currentEpisodeId ??= firstEpisode.id;
+          _currentEpisodeTitle ??= firstEpisode.title;
+        }
+      }
+    }
+
+    final videoUrl = _currentVideoUrl ?? details.videoUrl;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_currentVideoUrl == null && videoUrl != null && videoUrl.isNotEmpty) {
+        setState(() {
+          _currentVideoUrl = videoUrl;
+        });
+      }
+    });
+
+    if (details.isSeries && details.seasons != null) {
+      if (_tabController == null) {
+        int initialIndex = 0;
+        if (widget.contentItem.initialSeasonNumber != null &&
+            details.seasons != null) {
+          final seasonIndex = details.seasons!.indexWhere((season) {
+            final seasonNum = _extractSeasonNumber(season.seasonName);
+            return seasonNum == widget.contentItem.initialSeasonNumber;
+          });
+          if (seasonIndex >= 0) {
+            initialIndex = seasonIndex;
+            _currentSeasonNumber = widget.contentItem.initialSeasonNumber;
+            _currentEpisodeNumber = widget.contentItem.initialEpisodeNumber;
+            _currentEpisodeId = widget.contentItem.initialEpisodeId;
+          }
+        } else if (_currentSeasonNumber == null &&
+            details.seasons!.isNotEmpty) {
+          // Fall back to first season if not set
+          _currentSeasonNumber = _extractSeasonNumber(
+            details.seasons!.first.seasonName,
+          );
+        }
+        _tabController = TabController(
+          length: details.seasons!.length,
+          vsync: this,
+          initialIndex: initialIndex,
+        );
+      }
+    }
+
+    return Column(
+      children: [
+        if (videoUrl != null && videoUrl.isNotEmpty)
+          Stack(
+            children: [
+              Builder(
+                builder: (context) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _notifyPlayerReceived();
+                  });
+
+                  Duration? resolvedInitialPosition = _initialPosition;
+
+                  return _VideoPlayerWidgetWrapper(
+                    key: _videoPlayerKey,
+                    videoUrl: _resolveVideoUrl(ref, videoUrl),
+                    autoPlay: true,
+                    initialPosition: resolvedInitialPosition,
+                    receivedPlayer: _receivedPlayer,
+                    receivedController: _receivedVideoController,
+                    onProgressUpdate: (currentTime, duration) {
+                      _initialPosition = Duration(seconds: currentTime.toInt());
+                    },
+                    onFullscreenChanged: (isFullscreen) {
+                      setState(() {
+                        _isVideoPlayerFullscreen = isFullscreen;
+                      });
+                    },
+                  );
+                },
+              ),
+            ],
+          ),
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ContentDetailsSection(
+                  details: details,
+                  onWatchStatusDropdown: (_) => const SizedBox.shrink(),
+                  onDownloadButton: null,
+                ),
+                if (details.isSeries && details.seasons != null)
+                  OfflineSeasonsSection(
+                    seasons: details.seasons!,
+                    currentSeasonNumber: _currentSeasonNumber,
+                    currentEpisodeNumber: _currentEpisodeNumber,
+                    currentEpisodeId: _currentEpisodeId,
+                    contentItem: widget.contentItem,
+                    onEpisodeSelected: (season, episode) {
+                      final seasonNum = _extractSeasonNumber(season.seasonName);
+                      final episodeNum = episode.episodeNumber ?? 1;
+                      setState(() {
+                        _currentVideoUrl = episode.link;
+                        _currentSeasonNumber = seasonNum;
+                        _currentEpisodeNumber = episodeNum;
+                        _currentEpisodeId = episode.id;
+                        _currentEpisodeTitle = episode.title;
+                      });
+                    },
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -548,7 +959,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
                   return _VideoPlayerWidgetWrapper(
                     key: _videoPlayerKey,
-                    videoUrl: videoUrl,
+                    videoUrl: _resolveVideoUrl(ref, videoUrl),
                     autoPlay: true,
                     initialPosition: resolvedInitialPosition,
                     receivedPlayer: _receivedPlayer,
@@ -612,10 +1023,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
             height: 250,
             color: AppColors.black,
             child: details.posterUrl.isNotEmpty
-                ? CachedNetworkImage(
-                    imageUrl: details.posterUrl,
-                    fit: BoxFit.cover,
-                  )
+                ? _buildPosterImage(details.posterUrl)
                 : const Center(
                     child: Icon(
                       Icons.movie,
@@ -631,6 +1039,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                 child: ContentDetailsSection(
                   details: details,
                   onWatchStatusDropdown: _buildWatchStatusDropdown,
+                  onDownloadButton: (details) => _buildDownloadButton(details),
                 ),
               ),
               if (details.isSeries && details.seasons != null)
@@ -640,11 +1049,22 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                     tabController: _tabController!,
                     currentVideoUrl: _currentVideoUrl,
                     onEpisodeTap: _handleEpisodeTap,
+                    onEpisodeDownload:
+                        (season, seasonNumber, episodeNumber, episode) =>
+                            _buildEpisodeDownloadButton(
+                              details,
+                              season,
+                              seasonNumber,
+                              episodeNumber,
+                              episode,
+                            ),
                   ),
                 ),
               SliverToBoxAdapter(
                 child: Builder(
                   builder: (context) {
+                    final isOffline = ref.watch(offlineModeProvider);
+                    if (isOffline) return const SizedBox.shrink();
                     final workingServersAsync = ref.watch(
                       workingFtpServersProvider,
                     );
@@ -738,13 +1158,117 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     }
 
     setState(() {
-      _currentVideoUrl = episode.link;
+      final isOffline = ref.read(offlineModeProvider);
+      String resolvedUrl = episode.link;
+
+      if (isOffline) {
+        _logger.i('Playing offline episode: S$seasonNumber E$episodeNumber');
+
+        final downloadedContent = ref.read(
+          downloadedContentItemProvider((
+            contentId: widget.contentItem.id,
+            seasonNumber: seasonNumber,
+            episodeNumber: episodeNumber,
+          )),
+        );
+        if (downloadedContent != null &&
+            downloadedContent.localPath.isNotEmpty) {
+          resolvedUrl = downloadedContent.localPath;
+          _logger.d('Resolved to local file: $resolvedUrl');
+        } else {
+          _logger.w(
+            'Failed to resolve local file for S$seasonNumber E$episodeNumber',
+          );
+        }
+      }
+
+      _currentVideoUrl = resolvedUrl;
       _currentSeasonNumber = seasonNumber;
       _currentEpisodeNumber = episodeNumber;
       _currentEpisodeId = newEpisodeId;
       _currentEpisodeTitle = episode.title;
       _initialPosition = newPosition;
     });
+  }
+
+  Widget _buildDownloadButton(ContentDetails details) {
+    final workingServersAsync = ref.watch(workingFtpServersProvider);
+
+    return workingServersAsync.when(
+      data: (servers) {
+        final server = servers
+            .where((s) => s.name == widget.contentItem.serverName)
+            .firstOrNull;
+
+        if (server == null) return const SizedBox.shrink();
+        if (details.videoUrl == null || details.videoUrl!.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return DownloadButton(
+          contentId: widget.contentItem.id,
+          title: details.title,
+          posterUrl: details.posterUrl,
+          description: details.description ?? '',
+          serverName: widget.contentItem.serverName,
+          serverType: widget.contentItem.serverType,
+          ftpServerId: server.id,
+          contentType: details.contentType,
+          videoUrl: details.videoUrl!,
+          year: details.year,
+          quality: details.quality,
+          rating: details.rating,
+          metadata: details.toMetadata(),
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+    );
+  }
+
+  Widget _buildEpisodeDownloadButton(
+    ContentDetails details,
+    Season season,
+    int seasonNumber,
+    int episodeNumber,
+    Episode episode,
+  ) {
+    final workingServersAsync = ref.watch(workingFtpServersProvider);
+
+    return workingServersAsync.when(
+      data: (servers) {
+        final server = servers
+            .where((s) => s.name == widget.contentItem.serverName)
+            .firstOrNull;
+
+        if (server == null) return const SizedBox.shrink();
+        if (episode.link.isEmpty) return const SizedBox.shrink();
+
+        return DownloadButton(
+          contentId: widget.contentItem.id,
+          title: details.title,
+          posterUrl: details.posterUrl,
+          description: details.description ?? '',
+          serverName: widget.contentItem.serverName,
+          serverType: widget.contentItem.serverType,
+          ftpServerId: server.id,
+          contentType: details.contentType,
+          videoUrl: episode.link,
+          year: details.year,
+          quality: details.quality,
+          rating: details.rating,
+          seasonNumber: seasonNumber,
+          episodeNumber: episodeNumber,
+          episodeTitle: episode.title,
+          seriesTitle: details.title,
+          totalSeasons: details.seasons?.length,
+          metadata: details.toMetadata(),
+          isCompact: true,
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+    );
   }
 
   Widget _buildWatchStatusDropdown(ContentDetails details) {

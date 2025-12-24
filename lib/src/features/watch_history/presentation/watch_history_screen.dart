@@ -7,6 +7,7 @@ import '../../../core/widgets/app_scaffold.dart';
 import '../../../core/widgets/right_drawer.dart';
 import '../../../core/widgets/search_overlay.dart';
 import '../../../state/watch_history/watch_history_provider.dart';
+import '../../../state/ftp/working_ftp_servers_provider.dart';
 import '../data/watch_history_models.dart';
 import '../../../features/home/data/home_models.dart';
 import '../../../features/content_details/presentation/content_details_screen.dart';
@@ -75,15 +76,43 @@ class _WatchHistoryScreenState extends ConsumerState<WatchHistoryScreen>
 
   @override
   Widget build(BuildContext context) {
+    final workingServersAsync = ref.watch(workingFtpServersProvider);
+
     return AppScaffold(
       title: 'Watch History',
       endDrawer: const RightDrawer(),
       actions: [
-        IconButton(
-          tooltip: 'Search',
-          onPressed: _toggleSearch,
-          icon: const Icon(Icons.search),
-          color: AppColors.primary,
+        workingServersAsync.when(
+          data: (workingServers) => IconButton(
+            tooltip: workingServers.isEmpty
+                ? 'Add working FTP servers to search'
+                : 'Search',
+            onPressed: workingServers.isEmpty ? null : _toggleSearch,
+            icon: const Icon(Icons.search),
+            color: workingServers.isEmpty
+                ? AppColors.textLow
+                : AppColors.primary,
+          ),
+          loading: () => const SizedBox(
+            width: 48,
+            height: 48,
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                ),
+              ),
+            ),
+          ),
+          error: (_, _) => IconButton(
+            tooltip: 'Search',
+            onPressed: _toggleSearch,
+            icon: const Icon(Icons.search),
+            color: AppColors.primary,
+          ),
         ),
         Builder(
           builder: (context) {

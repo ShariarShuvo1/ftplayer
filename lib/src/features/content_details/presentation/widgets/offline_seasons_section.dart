@@ -1,42 +1,38 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/theme/app_colors.dart';
+import '../../../../state/downloads/download_provider.dart';
+import '../../../home/data/home_models.dart';
 import '../../data/content_details_models.dart';
 
-class SeasonsSection extends StatefulWidget {
-  const SeasonsSection({
-    required this.details,
-    required this.tabController,
-    required this.currentVideoUrl,
-    required this.onEpisodeTap,
-    this.onEpisodeDownload,
+class OfflineSeasonsSection extends ConsumerStatefulWidget {
+  const OfflineSeasonsSection({
+    required this.seasons,
+    required this.currentSeasonNumber,
+    required this.currentEpisodeNumber,
+    required this.currentEpisodeId,
+    required this.contentItem,
+    required this.onEpisodeSelected,
     super.key,
   });
 
-  final ContentDetails details;
-  final TabController tabController;
-  final String? currentVideoUrl;
-  final Function(
-    Season season,
-    int seasonNumber,
-    int episodeNumber,
-    Episode episode,
-  )
-  onEpisodeTap;
-  final Widget Function(
-    Season season,
-    int seasonNumber,
-    int episodeNumber,
-    Episode episode,
-  )?
-  onEpisodeDownload;
+  final List<Season> seasons;
+  final int? currentSeasonNumber;
+  final int? currentEpisodeNumber;
+  final String? currentEpisodeId;
+  final ContentItem contentItem;
+  final Function(Season season, Episode episode) onEpisodeSelected;
 
   @override
-  State<SeasonsSection> createState() => _SeasonsSectionState();
+  ConsumerState<OfflineSeasonsSection> createState() {
+    return _OfflineSeasonsSectionState();
+  }
 }
 
-class _SeasonsSectionState extends State<SeasonsSection>
-    with SingleTickerProviderStateMixin {
+class _OfflineSeasonsSectionState extends ConsumerState<OfflineSeasonsSection>
+    with TickerProviderStateMixin {
   late AnimationController _animationController;
+  late TabController _tabController;
   bool _isExpanded = true;
 
   @override
@@ -46,6 +42,23 @@ class _SeasonsSectionState extends State<SeasonsSection>
       duration: const Duration(milliseconds: 400),
       vsync: this,
     );
+
+    int initialTabIndex = 0;
+    if (widget.currentSeasonNumber != null && widget.seasons.isNotEmpty) {
+      final seasonIndex = widget.seasons.indexWhere((season) {
+        return _extractSeasonNumber(season.seasonName) ==
+            widget.currentSeasonNumber;
+      });
+      if (seasonIndex >= 0) {
+        initialTabIndex = seasonIndex;
+      }
+    }
+
+    _tabController = TabController(
+      length: widget.seasons.length,
+      vsync: this,
+      initialIndex: initialTabIndex,
+    );
     if (_isExpanded) {
       _animationController.forward();
     }
@@ -54,6 +67,7 @@ class _SeasonsSectionState extends State<SeasonsSection>
   @override
   void dispose() {
     _animationController.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -68,31 +82,31 @@ class _SeasonsSectionState extends State<SeasonsSection>
     }
   }
 
+  bool _isEpisodeAvailableOffline(int seasonNumber, int episodeNumber) {
+    final downloaded = ref.read(
+      downloadedContentItemProvider((
+        contentId: widget.contentItem.id,
+        seasonNumber: seasonNumber,
+        episodeNumber: episodeNumber,
+      )),
+    );
+    return downloaded != null && downloaded.localPath.isNotEmpty;
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (!widget.details.isSeries || widget.details.seasons == null) {
-      return const SizedBox.shrink();
-    }
-
     return Column(
       children: [
-        GestureDetector(
-          onTap: _toggleExpanded,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: AppColors.outline.withValues(alpha: 0.5),
-                  width: 0.5,
-                ),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: _toggleExpanded,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
                     'Episodes',
                     style: const TextStyle(
                       color: AppColors.textHigh,
@@ -100,21 +114,21 @@ class _SeasonsSectionState extends State<SeasonsSection>
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                ),
-                AnimatedBuilder(
-                  animation: _animationController,
-                  builder: (context, child) {
-                    return Transform.rotate(
-                      angle: _animationController.value * 3.14159,
-                      child: Icon(
-                        Icons.expand_less,
-                        color: AppColors.primary,
-                        size: 28,
-                      ),
-                    );
-                  },
-                ),
-              ],
+                  AnimatedBuilder(
+                    animation: _animationController,
+                    builder: (context, child) {
+                      return Transform.rotate(
+                        angle: _animationController.value * 3.14159,
+                        child: Icon(
+                          Icons.expand_less,
+                          color: AppColors.primary,
+                          size: 28,
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -134,7 +148,7 @@ class _SeasonsSectionState extends State<SeasonsSection>
                     ),
                   ),
                   child: TabBar(
-                    controller: widget.tabController,
+                    controller: _tabController,
                     isScrollable: true,
                     tabAlignment: TabAlignment.start,
                     indicatorSize: TabBarIndicatorSize.tab,
@@ -160,7 +174,7 @@ class _SeasonsSectionState extends State<SeasonsSection>
                       horizontal: 12,
                       vertical: 8,
                     ),
-                    tabs: widget.details.seasons!
+                    tabs: widget.seasons
                         .map(
                           (season) => Tab(
                             height: 32,
@@ -179,13 +193,13 @@ class _SeasonsSectionState extends State<SeasonsSection>
                 SizedBox(
                   height: 400,
                   child: TabBarView(
-                    controller: widget.tabController,
-                    children: widget.details.seasons!.asMap().entries.map((
-                      entry,
-                    ) {
-                      final seasonIndex = entry.key;
+                    controller: _tabController,
+                    children: widget.seasons.asMap().entries.map((entry) {
                       final season = entry.value;
-                      return _buildEpisodeList(season, seasonIndex + 1);
+                      final seasonNumber = _extractSeasonNumber(
+                        season.seasonName,
+                      );
+                      return _buildEpisodeList(season, seasonNumber);
                     }).toList(),
                   ),
                 ),
@@ -203,18 +217,23 @@ class _SeasonsSectionState extends State<SeasonsSection>
       itemCount: season.episodes.length,
       itemBuilder: (context, index) {
         final episode = season.episodes[index];
-        final isPlaying = widget.currentVideoUrl == episode.link;
+        final isAvailable = _isEpisodeAvailableOffline(seasonNumber, index + 1);
         final episodeNumber = index + 1;
+        final episodeId = episode.id ?? '${seasonNumber}_$episodeNumber';
+        final isCurrentEpisode =
+            widget.currentEpisodeId == episodeId ||
+            (widget.currentSeasonNumber == seasonNumber &&
+                widget.currentEpisodeNumber == episodeNumber);
 
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
-            color: isPlaying
+            color: isCurrentEpisode
                 ? AppColors.primary.withValues(alpha: 0.1)
                 : AppColors.surface,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: isPlaying
+              color: isCurrentEpisode
                   ? AppColors.primary.withValues(alpha: 0.3)
                   : Colors.transparent,
               width: 1,
@@ -224,14 +243,11 @@ class _SeasonsSectionState extends State<SeasonsSection>
             color: Colors.transparent,
             child: InkWell(
               borderRadius: BorderRadius.circular(12),
-              onTap: () {
-                widget.onEpisodeTap(
-                  season,
-                  seasonNumber,
-                  episodeNumber,
-                  episode,
-                );
-              },
+              onTap: isAvailable
+                  ? () {
+                      widget.onEpisodeSelected(season, episode);
+                    }
+                  : null,
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Row(
@@ -240,13 +256,13 @@ class _SeasonsSectionState extends State<SeasonsSection>
                       width: 48,
                       height: 48,
                       decoration: BoxDecoration(
-                        color: isPlaying
+                        color: isCurrentEpisode
                             ? AppColors.primary
                             : AppColors.surfaceAlt,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Center(
-                        child: isPlaying
+                        child: isCurrentEpisode
                             ? const Icon(
                                 Icons.pause,
                                 color: AppColors.black,
@@ -270,9 +286,11 @@ class _SeasonsSectionState extends State<SeasonsSection>
                           Text(
                             episode.title,
                             style: TextStyle(
-                              color: isPlaying
-                                  ? AppColors.primary
-                                  : AppColors.textHigh,
+                              color: isAvailable
+                                  ? (isCurrentEpisode
+                                        ? AppColors.primary
+                                        : AppColors.textHigh)
+                                  : AppColors.textLow,
                               fontSize: 15,
                               fontWeight: FontWeight.w600,
                               height: 1.3,
@@ -280,7 +298,7 @@ class _SeasonsSectionState extends State<SeasonsSection>
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          if (isPlaying) ...[
+                          if (isCurrentEpisode) ...[
                             const SizedBox(height: 4),
                             Row(
                               children: [
@@ -309,20 +327,22 @@ class _SeasonsSectionState extends State<SeasonsSection>
                       ),
                     ),
                     const SizedBox(width: 12),
-                    if (widget.onEpisodeDownload != null) ...[
-                      widget.onEpisodeDownload!(
-                        season,
-                        seasonNumber,
-                        episodeNumber,
-                        episode,
+                    if (!isAvailable)
+                      Icon(
+                        Icons.lock,
+                        color: AppColors.textLow.withValues(alpha: 0.5),
+                        size: 24,
+                      )
+                    else
+                      Icon(
+                        isCurrentEpisode
+                            ? Icons.volume_up
+                            : Icons.play_circle_outline,
+                        color: isCurrentEpisode
+                            ? AppColors.primary
+                            : AppColors.textLow,
+                        size: 24,
                       ),
-                      const SizedBox(width: 8),
-                    ],
-                    Icon(
-                      isPlaying ? Icons.volume_up : Icons.play_circle_outline,
-                      color: isPlaying ? AppColors.primary : AppColors.textLow,
-                      size: 24,
-                    ),
                   ],
                 ),
               ),
@@ -331,5 +351,11 @@ class _SeasonsSectionState extends State<SeasonsSection>
         );
       },
     );
+  }
+
+  int _extractSeasonNumber(String seasonName) {
+    final regex = RegExp(r'\d+');
+    final match = regex.firstMatch(seasonName);
+    return match != null ? int.parse(match.group(0)!) : 0;
   }
 }

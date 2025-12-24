@@ -21,8 +21,8 @@ dependencies:
     flutter_secure_storage: ^10.0.0
 
     # Video & playback
-    media_kit: ^1.1.11
-    media_kit_video: ^1.2.5
+    media_kit: ^1.2.5
+    media_kit_video: ^1.3.0
     media_kit_libs_video: ^1.0.7
     wakelock_plus: ^1.2.8
 
@@ -32,6 +32,7 @@ dependencies:
     # Connectivity / device
     connectivity_plus: ^7.0.0
     device_info_plus: ^12.3.0
+    path_provider: ^2.1.0
 
     # UI and visuals
     google_fonts: ^6.2.1

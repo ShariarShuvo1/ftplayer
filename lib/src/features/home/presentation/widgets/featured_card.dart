@@ -58,20 +58,6 @@ class FeaturedCard extends ConsumerWidget {
                           size: 60,
                         ),
                       ),
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      stops: const [0.0, 0.5, 1.0],
-                      colors: [
-                        Colors.transparent,
-                        AppColors.black.withValues(alpha: 0.3),
-                        AppColors.black.withValues(alpha: 0.95),
-                      ],
-                    ),
-                  ),
-                ),
                 Positioned(
                   top: 12,
                   right: 12,
@@ -95,81 +81,97 @@ class FeaturedCard extends ConsumerWidget {
                   ),
                 ),
                 Positioned(
-                  bottom: 16,
-                  left: 16,
-                  right: 16,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        content.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppColors.textHigh,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          height: 1.2,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          if (content.year != null &&
-                              content.year!.isNotEmpty) ...[
-                            Text(
-                              content.year!,
-                              style: const TextStyle(
-                                color: AppColors.textMid,
-                                fontSize: 13,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                          ],
-                          if (content.quality != null &&
-                              content.quality!.isNotEmpty)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.primary,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                content.quality!,
-                                style: const TextStyle(
-                                  color: AppColors.black,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          if (content.rating != null) ...[
-                            const SizedBox(width: 12),
-                            Row(
-                              children: [
-                                const Icon(
-                                  Icons.star,
-                                  color: AppColors.warning,
-                                  size: 16,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  content.rating!.toStringAsFixed(1),
-                                  style: const TextStyle(
-                                    color: AppColors.textMid,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 70),
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          AppColors.black.withValues(alpha: 0.2),
+                          AppColors.black.withValues(alpha: 0.7),
+                          AppColors.black.withValues(alpha: 0.95),
                         ],
                       ),
-                    ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          content.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            height: 1.2,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            if (content.year != null &&
+                                content.year!.isNotEmpty) ...[
+                              Text(
+                                content.year!,
+                                style: const TextStyle(
+                                  color: AppColors.textMid,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                            ],
+                            if (content.quality != null &&
+                                content.quality!.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  content.quality!,
+                                  style: const TextStyle(
+                                    color: AppColors.black,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            if (content.rating != null) ...[
+                              const SizedBox(width: 12),
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.star,
+                                    color: AppColors.warning,
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    content.rating!.toStringAsFixed(1),
+                                    style: const TextStyle(
+                                      color: AppColors.textMid,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],

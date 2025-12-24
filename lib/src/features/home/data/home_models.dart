@@ -14,6 +14,7 @@ class ContentItem {
     this.initialEpisodeNumber,
     this.initialEpisodeId,
     this.initialProgress,
+    this.initialData,
   });
 
   final String id;
@@ -30,6 +31,7 @@ class ContentItem {
   final int? initialEpisodeNumber;
   final String? initialEpisodeId;
   final Duration? initialProgress;
+  final Map<String, dynamic>? initialData;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -46,6 +48,7 @@ class ContentItem {
     'initialEpisodeNumber': initialEpisodeNumber,
     'initialEpisodeId': initialEpisodeId,
     'initialProgress': initialProgress?.inSeconds,
+    'initialData': initialData,
   };
 
   factory ContentItem.fromJson(Map<String, dynamic> json) {
@@ -66,6 +69,7 @@ class ContentItem {
       initialProgress: json['initialProgress'] != null
           ? Duration(seconds: json['initialProgress'] as int)
           : null,
+      initialData: json['initialData'] as Map<String, dynamic>?,
     );
   }
 
@@ -79,9 +83,11 @@ class ContentItem {
         ? '$baseImageUrl$image'
         : '';
 
+    final title = (json['title'] ?? json['name'] ?? '').toString();
+
     return ContentItem(
       id: (json['id'] ?? json['_id'] ?? '').toString(),
-      title: (json['title'] ?? '').toString(),
+      title: title,
       posterUrl: posterUrl,
       serverName: serverName,
       serverType: 'circleftp',

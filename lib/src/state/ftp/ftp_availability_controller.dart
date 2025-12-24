@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/ftp_servers/data/ftp_server_models.dart';
 import '../../features/ftp_servers/data/ftp_server_repository.dart';
+import '../connectivity/connectivity_provider.dart';
 import 'working_ftp_servers_provider.dart';
 import 'all_ftp_servers_provider.dart';
 
@@ -132,6 +133,17 @@ class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
   );
 
   Future<void> startAvailabilityCheck() async {
+    final isOffline = ref.read(offlineModeProvider);
+
+    if (isOffline) {
+      state = state.copyWith(
+        isScanning: false,
+        isComplete: true,
+        checkResults: [],
+      );
+      return;
+    }
+
     try {
       state = state.copyWith(isScanning: true, hasError: false);
 
