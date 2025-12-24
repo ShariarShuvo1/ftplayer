@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shimmer_animation/shimmer_animation.dart';
 import 'package:go_router/go_router.dart';
+import 'dart:io';
 
 import '../../../../app/theme/app_colors.dart';
 import '../../../content_details/presentation/content_details_screen.dart';
@@ -17,6 +18,40 @@ class ContentCard extends ConsumerWidget {
     if (context.mounted) {
       context.push(ContentDetailsScreen.path, extra: content);
     }
+  }
+
+  Widget _buildImage(String imagePath) {
+    final isLocalFile =
+        imagePath.startsWith('/') ||
+        imagePath.startsWith('file://') ||
+        File(imagePath).existsSync();
+
+    if (isLocalFile) {
+      final file = File(imagePath);
+      if (file.existsSync()) {
+        return Image.file(
+          file,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => Container(
+            color: AppColors.surface,
+            child: const Icon(Icons.movie, color: AppColors.textLow, size: 40),
+          ),
+        );
+      }
+    }
+
+    return CachedNetworkImage(
+      imageUrl: imagePath,
+      fit: BoxFit.cover,
+      placeholder: (context, url) => Shimmer(
+        color: AppColors.primary.withValues(alpha: 0.3),
+        child: Container(color: AppColors.surface),
+      ),
+      errorWidget: (context, url, error) => Container(
+        color: AppColors.surface,
+        child: const Icon(Icons.movie, color: AppColors.textLow, size: 40),
+      ),
+    );
   }
 
   @override
@@ -38,22 +73,7 @@ class ContentCard extends ConsumerWidget {
                     AspectRatio(
                       aspectRatio: 2 / 3,
                       child: content.posterUrl.isNotEmpty
-                          ? CachedNetworkImage(
-                              imageUrl: content.posterUrl,
-                              fit: BoxFit.cover,
-                              placeholder: (context, url) => Shimmer(
-                                color: AppColors.primary.withValues(alpha: 0.3),
-                                child: Container(color: AppColors.surface),
-                              ),
-                              errorWidget: (context, url, error) => Container(
-                                color: AppColors.surface,
-                                child: const Icon(
-                                  Icons.movie,
-                                  color: AppColors.textLow,
-                                  size: 40,
-                                ),
-                              ),
-                            )
+                          ? _buildImage(content.posterUrl)
                           : Container(
                               color: AppColors.surface,
                               child: const Icon(

@@ -6,11 +6,13 @@ class ContentDetailsSection extends StatefulWidget {
   const ContentDetailsSection({
     required this.details,
     required this.onWatchStatusDropdown,
+    this.onDownloadButton,
     super.key,
   });
 
   final ContentDetails details;
   final Widget Function(ContentDetails) onWatchStatusDropdown;
+  final Widget Function(ContentDetails)? onDownloadButton;
 
   @override
   State<ContentDetailsSection> createState() => _ContentDetailsSectionState();
@@ -106,7 +108,20 @@ class _ContentDetailsSectionState extends State<ContentDetailsSection>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  widget.onWatchStatusDropdown(widget.details),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: widget.onWatchStatusDropdown(widget.details),
+                      ),
+                      if (widget.onDownloadButton != null &&
+                          !widget.details.isSeries &&
+                          widget.details.videoUrl != null &&
+                          widget.details.videoUrl!.isNotEmpty) ...[
+                        const SizedBox(width: 12),
+                        widget.onDownloadButton!(widget.details),
+                      ],
+                    ],
+                  ),
                   const SizedBox(height: 12),
                   _buildMetadata(),
                   if (widget.details.description != null &&

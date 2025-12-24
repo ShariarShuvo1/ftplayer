@@ -34,6 +34,104 @@ class ContentDetails {
   bool get isSeries => contentType == 'series' || seasons != null;
   bool get hasVideoUrl => videoUrl != null && videoUrl!.isNotEmpty;
 
+  Map<String, dynamic> toMetadata() => {
+    'id': id,
+    'title': title,
+    'posterUrl': posterUrl,
+    'serverName': serverName,
+    'serverType': serverType,
+    'contentType': contentType,
+    'year': year,
+    'quality': quality,
+    'rating': rating,
+    'description': description,
+    'watchTime': watchTime,
+    'tags': tags,
+    'videoUrl': videoUrl,
+    'seasons': seasons
+        ?.map(
+          (s) => {
+            'seasonName': s.seasonName,
+            'episodes': s.episodes
+                .map(
+                  (e) => {
+                    'title': e.title,
+                    'link': e.link,
+                    'id': e.id,
+                    'episodeNumber': e.episodeNumber,
+                  },
+                )
+                .toList(),
+          },
+        )
+        .toList(),
+  };
+
+  factory ContentDetails.fromMetadata(Map<String, dynamic> metadata) {
+    final typedMetadata = _castMetadata(metadata);
+
+    List<Season>? seasons;
+    final seasonsData = typedMetadata['seasons'] as List?;
+    if (seasonsData != null) {
+      seasons = seasonsData.map((s) {
+        final seasonMap = s is Map
+            ? _castToStringDynamic(s)
+            : s as Map<String, dynamic>;
+        return Season.fromJson(seasonMap);
+      }).toList();
+    }
+
+    final localPosterPath = typedMetadata['localPosterPath']?.toString();
+    final posterUrl =
+        localPosterPath ?? typedMetadata['posterUrl']?.toString() ?? '';
+
+    return ContentDetails(
+      id: typedMetadata['id']?.toString() ?? '',
+      title: typedMetadata['title']?.toString() ?? '',
+      posterUrl: posterUrl,
+      serverName: typedMetadata['serverName']?.toString() ?? '',
+      serverType: typedMetadata['serverType']?.toString() ?? '',
+      contentType: typedMetadata['contentType']?.toString() ?? '',
+      year: typedMetadata['year']?.toString(),
+      quality: typedMetadata['quality']?.toString(),
+      rating: typedMetadata['rating'] is num
+          ? (typedMetadata['rating'] as num).toDouble()
+          : null,
+      description: typedMetadata['description']?.toString(),
+      watchTime: typedMetadata['watchTime']?.toString(),
+      tags: typedMetadata['tags']?.toString(),
+      videoUrl: typedMetadata['videoUrl']?.toString(),
+      seasons: seasons,
+    );
+  }
+
+  static Map<String, dynamic> _castMetadata(dynamic input) {
+    if (input is Map<String, dynamic>) {
+      return input;
+    }
+    if (input is Map) {
+      return _castToStringDynamic(input);
+    }
+    return {};
+  }
+
+  static Map<String, dynamic> _castToStringDynamic(Map input) {
+    final result = <String, dynamic>{};
+    input.forEach((key, value) {
+      final stringKey = key.toString();
+      if (value is Map) {
+        result[stringKey] = _castToStringDynamic(value);
+      } else if (value is List) {
+        result[stringKey] = value
+            .map((item) => item is Map ? _castToStringDynamic(item) : item)
+            .toList();
+      } else {
+        result[stringKey] = value;
+      }
+    });
+    return result;
+  }
+
   factory ContentDetails.fromCircleFtp(
     Map<String, dynamic> json,
     String baseImageUrl,
@@ -155,15 +253,24 @@ class Season {
 }
 
 class Episode {
-  Episode({required this.title, required this.link});
+  Episode({
+    required this.title,
+    required this.link,
+    this.id,
+    this.episodeNumber,
+  });
 
   final String title;
   final String link;
+  final String? id;
+  final int? episodeNumber;
 
   factory Episode.fromJson(Map<String, dynamic> json) {
     return Episode(
       title: json['title']?.toString() ?? 'Episode',
       link: json['link']?.toString() ?? '',
+      id: json['id']?.toString() ?? json['link']?.toString(),
+      episodeNumber: json['episodeNumber'] as int?,
     );
   }
 }

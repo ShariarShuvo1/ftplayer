@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/api_error.dart';
 import '../../features/auth/data/auth_repository.dart';
+import '../connectivity/connectivity_provider.dart';
 
 final authControllerProvider =
     AsyncNotifierProvider<AuthController, AuthSession?>(AuthController.new);
@@ -11,12 +12,26 @@ class AuthController extends AsyncNotifier<AuthSession?> {
   @override
   Future<AuthSession?> build() async {
     final repo = ref.read(authRepositoryProvider);
+
     try {
+      final token = await repo.tokenStorage.readToken();
+      if (token == null || token.isEmpty) {
+        ref.read(authInitializedProvider.notifier).state = true;
+        return null;
+      }
+
+      final isOffline = ref.read(offlineModeProvider);
+
+      if (isOffline) {
+        final session = await repo.restoreSessionOffline();
+        ref.read(authInitializedProvider.notifier).state = true;
+        return session;
+      }
+
       final session = await repo.restoreSession();
       ref.read(authInitializedProvider.notifier).state = true;
       return session;
     } catch (_) {
-      await repo.logout();
       ref.read(authInitializedProvider.notifier).state = true;
       return null;
     }

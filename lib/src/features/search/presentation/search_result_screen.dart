@@ -7,6 +7,7 @@ import '../../../core/widgets/app_scaffold.dart';
 import '../../../core/widgets/right_drawer.dart';
 import '../../../core/widgets/search_overlay.dart';
 import '../../../state/search/search_provider.dart';
+import '../../../state/ftp/working_ftp_servers_provider.dart';
 import '../../content_details/presentation/content_details_screen.dart';
 import '../../home/data/home_models.dart';
 import '../data/search_models.dart';
@@ -93,16 +94,43 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
   @override
   Widget build(BuildContext context) {
     final searchResultsAsync = ref.watch(searchResultsProvider);
+    final workingServersAsync = ref.watch(workingFtpServersProvider);
 
     return AppScaffold(
       title: 'Search Results',
       endDrawer: const RightDrawer(),
       actions: [
-        IconButton(
-          tooltip: 'Search',
-          onPressed: _toggleSearch,
-          icon: const Icon(Icons.search),
-          color: AppColors.primary,
+        workingServersAsync.when(
+          data: (workingServers) => IconButton(
+            tooltip: workingServers.isEmpty
+                ? 'Add working FTP servers to search'
+                : 'Search',
+            onPressed: workingServers.isEmpty ? null : _toggleSearch,
+            icon: const Icon(Icons.search),
+            color: workingServers.isEmpty
+                ? AppColors.textLow
+                : AppColors.primary,
+          ),
+          loading: () => const SizedBox(
+            width: 48,
+            height: 48,
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                ),
+              ),
+            ),
+          ),
+          error: (_, _) => IconButton(
+            tooltip: 'Search',
+            onPressed: _toggleSearch,
+            icon: const Icon(Icons.search),
+            color: AppColors.primary,
+          ),
         ),
         Builder(
           builder: (context) {

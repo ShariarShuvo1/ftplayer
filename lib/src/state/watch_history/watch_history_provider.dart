@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/dio_provider.dart';
 import '../../features/watch_history/data/watch_history_api.dart';
 import '../../features/watch_history/data/watch_history_models.dart';
+import '../ftp/working_ftp_servers_provider.dart';
 
 final watchHistoryApiProvider = Provider<WatchHistoryApi>((ref) {
   final dio = ref.watch(dioProvider);
@@ -27,11 +28,41 @@ final watchHistoryListProvider = FutureProvider.family
       WatchHistoryListResponse,
       ({String? status, int limit, int page})
     >((ref, params) async {
+      final workingServersAsync = ref.watch(workingFtpServersProvider);
       final api = ref.watch(watchHistoryApiProvider);
-      return api.getWatchHistory(
+
+      final response = await api.getWatchHistory(
         status: params.status,
         limit: params.limit,
         page: params.page,
+      );
+
+      return workingServersAsync.when(
+        data: (workingServers) {
+          if (workingServers.isEmpty) {
+            return WatchHistoryListResponse(
+              message: response.message,
+              watchHistories: [],
+              pagination: response.pagination,
+            );
+          }
+
+          final workingServerIds = workingServers.map((s) => s.id).toSet();
+
+          final filteredHistories = response.watchHistories
+              .where(
+                (history) => workingServerIds.contains(history.ftpServerId),
+              )
+              .toList();
+
+          return WatchHistoryListResponse(
+            message: response.message,
+            watchHistories: filteredHistories,
+            pagination: response.pagination,
+          );
+        },
+        loading: () => response,
+        error: (_, _) => response,
       );
     });
 

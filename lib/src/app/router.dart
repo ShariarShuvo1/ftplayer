@@ -12,8 +12,10 @@ import '../features/ftp_servers/presentation/server_scan_screen.dart';
 import '../features/content_details/presentation/content_details_screen.dart';
 import '../features/watch_history/presentation/watch_history_screen.dart';
 import '../features/search/presentation/search_result_screen.dart';
+import '../features/downloads/presentation/downloads_screen.dart';
 import '../features/home/data/home_models.dart';
 import '../state/auth/auth_controller.dart';
+import '../state/connectivity/connectivity_provider.dart';
 
 final goRouterProvider = Provider<GoRouter>((ref) {
   final notifier = AuthRouterNotifier(ref);
@@ -24,11 +26,13 @@ final goRouterProvider = Provider<GoRouter>((ref) {
     refreshListenable: notifier,
     redirect: (context, state) {
       final auth = ref.read(authControllerProvider);
+      final isOffline = ref.read(offlineModeProvider);
 
       final isSplash = state.matchedLocation == SplashScreen.path;
       final isWelcome = state.matchedLocation == WelcomeScreen.path;
       final isLogin = state.matchedLocation == LoginScreen.path;
       final isSignup = state.matchedLocation == SignupScreen.path;
+      final isServerScan = state.matchedLocation == ServerScanScreen.path;
 
       final initialized = ref.read(authInitializedProvider);
 
@@ -46,7 +50,14 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       }
 
       if (isSplash || isWelcome || isLogin || isSignup) {
+        if (isOffline) {
+          return HomeScreen.path;
+        }
         return ServerScanScreen.path;
+      }
+
+      if (isServerScan && isOffline) {
+        return HomeScreen.path;
       }
 
       return null;
@@ -90,6 +101,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: WatchHistoryScreen.path,
         builder: (context, state) => const WatchHistoryScreen(),
+      ),
+      GoRoute(
+        path: DownloadsScreen.path,
+        builder: (context, state) => const DownloadsScreen(),
       ),
       GoRoute(
         path: SearchResultScreen.path,
