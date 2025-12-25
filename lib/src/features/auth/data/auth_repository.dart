@@ -31,6 +31,7 @@ class AuthRepository {
   }) async {
     final res = await api.signup(name: name, email: email, password: password);
     await tokenStorage.writeToken(res.token);
+    await tokenStorage.writeUserName(res.user.name);
     return AuthSession(token: res.token, user: res.user);
   }
 
@@ -40,26 +41,30 @@ class AuthRepository {
   }) async {
     final res = await api.login(email: email, password: password);
     await tokenStorage.writeToken(res.token);
+    await tokenStorage.writeUserName(res.user.name);
     return AuthSession(token: res.token, user: res.user);
   }
 
   Future<void> logout() async {
     await tokenStorage.deleteToken();
+    await tokenStorage.deleteUserName();
   }
 
   Future<AuthSession?> restoreSession() async {
     final token = await tokenStorage.readToken();
     if (token == null || token.isEmpty) return null;
     final me = await api.me();
+    await tokenStorage.writeUserName(me.user.name);
     return AuthSession(token: token, user: me.user);
   }
 
   Future<AuthSession?> restoreSessionOffline() async {
     final token = await tokenStorage.readToken();
     if (token == null || token.isEmpty) return null;
+    final cachedUserName = await tokenStorage.readUserName();
     return AuthSession(
       token: token,
-      user: UserDto(id: '', name: 'User', email: ''),
+      user: UserDto(id: '', name: cachedUserName ?? 'User', email: ''),
     );
   }
 }

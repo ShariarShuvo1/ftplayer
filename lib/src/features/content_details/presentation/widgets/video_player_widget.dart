@@ -94,6 +94,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   Player? get player => _player;
   VideoController? get videoController => _videoController;
   bool get isFullscreen => _isFullscreen;
+  Duration get currentPosition => _lastPosition;
 
   @override
   void initState() {

@@ -8,7 +8,10 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:logger/logger.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../state/content/content_details_provider.dart';
+import '../../../state/content/current_playing_content_provider.dart';
+import '../../../state/content/playback_state_provider.dart';
 import '../../../state/pip/pip_provider.dart';
+import '../../../state/pip/pip_state.dart';
 import '../../../state/ftp/working_ftp_servers_provider.dart';
 import '../../../state/watch_history/watch_history_provider.dart';
 import '../../../state/connectivity/connectivity_provider.dart';
@@ -36,7 +39,7 @@ class ContentDetailsScreen extends ConsumerStatefulWidget {
 }
 
 class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final Logger _logger = Logger();
 
   TabController? _tabController;
@@ -53,6 +56,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   bool _isVideoPlayerFullscreen = false;
   Duration? _initialPosition;
   final GlobalKey<_VideoPlayerWidgetWrapperState> _videoPlayerKey = GlobalKey();
+  AnimationController? _pipTransitionController;
 
   @override
   void initState() {
@@ -79,6 +83,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       }
     }
 
+    // Priority 1: Check if returning from PIP
     final pipState = ref.read(pipProvider);
     if (!_activatedPipFromHere &&
         pipState.isActive &&
@@ -88,6 +93,9 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       try {
         final pipContentItem = ContentItem.fromJson(pipState.contentItemJson!);
         if (pipContentItem.id == widget.contentItem.id) {
+          _logger.i(
+            '[Playback] Restoring from PIP for ${widget.contentItem.id}',
+          );
           _receivedPlayer = pipState.player;
           _receivedVideoController = pipState.videoController;
 
@@ -98,17 +106,65 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           _currentEpisodeId = pipState.currentEpisodeId;
           _currentEpisodeTitle = pipState.currentEpisodeTitle;
 
-          Future.microtask(() {
-            ref.read(pipProvider.notifier).deactivatePip(disposePlayer: false);
+          // Trigger animation after first frame
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _animatePipToVideoPlayer(pipState);
           });
+
+          // Update providers after build completes
+          Future.microtask(() {
+            ref
+                .read(currentPlayingContentProvider.notifier)
+                .state = CurrentPlayingContent(
+              contentId: widget.contentItem.id,
+              seasonNumber: _currentSeasonNumber,
+              episodeNumber: _currentEpisodeNumber,
+            );
+            ref.read(playbackStateProvider.notifier).clearPlaybackState();
+          });
+          return;
         } else {
           Future.microtask(() {
             ref.read(pipProvider.notifier).deactivatePip(disposePlayer: true);
           });
         }
       } catch (e) {
-        // Ignore errors when processing PiP state
+        _logger.e('[Playback] Error processing PIP state: $e', error: e);
       }
+    }
+
+    // Priority 2: Try to restore from playback cache
+    final playbackCache = ref.read(playbackStateProvider);
+    if (playbackCache != null &&
+        playbackCache.contentId == widget.contentItem.id) {
+      _logger.i(
+        '[Playback] Restoring cached playback state for ${widget.contentItem.id}',
+      );
+      _receivedPlayer = playbackCache.player;
+      _receivedVideoController = playbackCache.videoController;
+      _currentVideoUrl = playbackCache.currentVideoUrl;
+      _currentSeasonNumber = playbackCache.currentSeasonNumber;
+      _currentEpisodeNumber = playbackCache.currentEpisodeNumber;
+      _currentEpisodeId = playbackCache.currentEpisodeId;
+      _currentEpisodeTitle = playbackCache.currentEpisodeTitle;
+      if (playbackCache.currentPosition != null) {
+        _initialPosition = playbackCache.currentPosition;
+        _logger.d(
+          '[Playback] Restored position: ${playbackCache.currentPosition}',
+        );
+      }
+
+      Future.microtask(() {
+        ref
+            .read(currentPlayingContentProvider.notifier)
+            .state = CurrentPlayingContent(
+          contentId: widget.contentItem.id,
+          seasonNumber: _currentSeasonNumber,
+          episodeNumber: _currentEpisodeNumber,
+        );
+        ref.read(playbackStateProvider.notifier).clearPlaybackState();
+      });
+      return;
     }
   }
 
@@ -172,7 +228,23 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           _currentVideoUrl = resolvedUrl;
           _currentEpisodeTitle = episode.title;
         });
+
+        ref
+            .read(currentPlayingContentProvider.notifier)
+            .state = CurrentPlayingContent(
+          contentId: widget.contentItem.id,
+          seasonNumber: widget.contentItem.initialSeasonNumber!,
+          episodeNumber: widget.contentItem.initialEpisodeNumber!,
+        );
       }
+    } else {
+      ref
+          .read(currentPlayingContentProvider.notifier)
+          .state = CurrentPlayingContent(
+        contentId: widget.contentItem.id,
+        seasonNumber: null,
+        episodeNumber: null,
+      );
     }
   }
 
@@ -199,9 +271,145 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   }
 
   @override
+  void deactivate() {
+    // Cache the playback state in deactivate (before dispose), but NOT if PIP is active
+    // (because the player belongs to PIP now)
+    try {
+      final pipState = ref.read(pipProvider);
+      final videoPlayerState = _videoPlayerKey.currentState;
+      final playbackNotifier = ref.read(playbackStateProvider.notifier);
+
+      if (videoPlayerState != null &&
+          videoPlayerState.player != null &&
+          videoPlayerState.videoController != null &&
+          !(_activatedPipFromHere && pipState.isActive)) {
+        _logger.i(
+          '[Playback] Caching playback state for ${widget.contentItem.id}',
+        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          try {
+            playbackNotifier.cachePlaybackState(
+              contentId: widget.contentItem.id,
+              player: videoPlayerState.player,
+              videoController: videoPlayerState.videoController,
+              currentVideoUrl: _currentVideoUrl,
+              currentSeasonNumber: _currentSeasonNumber,
+              currentEpisodeNumber: _currentEpisodeNumber,
+              currentEpisodeId: _currentEpisodeId,
+              currentEpisodeTitle: _currentEpisodeTitle,
+              currentPosition: videoPlayerState.currentPosition,
+            );
+          } catch (e) {
+            _logger.e('[Playback] Error in post-frame cache: $e', error: e);
+          }
+        });
+      }
+    } catch (e) {
+      _logger.e('[Playback] Error caching playback state: $e', error: e);
+    }
+    super.deactivate();
+  }
+
+  @override
   void dispose() {
     _tabController?.dispose();
+    _pipTransitionController?.dispose();
+    try {
+      ref.read(currentPlayingContentProvider.notifier).state = null;
+    } catch (_) {
+      // Ignore if provider is already disposed
+    }
     super.dispose();
+  }
+
+  Future<void> _animatePipToVideoPlayer(PipState pipState) async {
+    if (!mounted) return;
+
+    // Deactivate PIP to remove overlay
+    ref.read(pipProvider.notifier).deactivatePip(disposePlayer: false);
+
+    // Wait a frame for the PIP overlay to be removed
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    if (!mounted) return;
+
+    final size = MediaQuery.of(context).size;
+    final targetWidth = size.width;
+    final targetHeight = 250.0;
+
+    // Create overlay entry for animation
+    final overlay = Overlay.of(context);
+    late OverlayEntry overlayEntry;
+
+    _pipTransitionController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+
+    final positionAnimation =
+        Tween<Offset>(
+          begin: pipState.position,
+          end: const Offset(0, 0),
+        ).animate(
+          CurvedAnimation(
+            parent: _pipTransitionController!,
+            curve: Curves.easeInOutCubic,
+          ),
+        );
+
+    final widthAnimation =
+        Tween<double>(begin: pipState.width, end: targetWidth).animate(
+          CurvedAnimation(
+            parent: _pipTransitionController!,
+            curve: Curves.easeInOutCubic,
+          ),
+        );
+
+    final heightAnimation =
+        Tween<double>(begin: pipState.height, end: targetHeight).animate(
+          CurvedAnimation(
+            parent: _pipTransitionController!,
+            curve: Curves.easeInOutCubic,
+          ),
+        );
+
+    overlayEntry = OverlayEntry(
+      builder: (context) => AnimatedBuilder(
+        animation: _pipTransitionController!,
+        builder: (context, child) {
+          return Positioned(
+            left: positionAnimation.value.dx,
+            top: positionAnimation.value.dy,
+            child: Container(
+              width: widthAnimation.value,
+              height: heightAnimation.value,
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(
+                  12 * (1 - _pipTransitionController!.value),
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(
+                  12 * (1 - _pipTransitionController!.value),
+                ),
+                child: Video(
+                  controller: pipState.videoController!,
+                  controls: NoVideoControls,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    overlay.insert(overlayEntry);
+
+    await _pipTransitionController!.forward();
+
+    overlayEntry.remove();
+    overlayEntry.dispose();
   }
 
   void _handleVerticalDragUpdate(DragUpdateDetails details) {
@@ -700,6 +908,16 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           _currentEpisodeNumber ??= firstEpisode.episodeNumber ?? 1;
           _currentEpisodeId ??= firstEpisode.id;
           _currentEpisodeTitle ??= firstEpisode.title;
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            ref
+                .read(currentPlayingContentProvider.notifier)
+                .state = CurrentPlayingContent(
+              contentId: widget.contentItem.id,
+              seasonNumber: _currentSeasonNumber,
+              episodeNumber: _currentEpisodeNumber,
+            );
+          });
         }
       }
     }
@@ -711,6 +929,16 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
         setState(() {
           _currentVideoUrl = videoUrl;
         });
+
+        if (!details.isSeries) {
+          ref
+              .read(currentPlayingContentProvider.notifier)
+              .state = CurrentPlayingContent(
+            contentId: widget.contentItem.id,
+            seasonNumber: null,
+            episodeNumber: null,
+          );
+        }
       }
     });
 
@@ -822,6 +1050,16 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
         setState(() {
           _currentVideoUrl = videoUrl;
         });
+
+        if (!details.isSeries) {
+          ref
+              .read(currentPlayingContentProvider.notifier)
+              .state = CurrentPlayingContent(
+            contentId: widget.contentItem.id,
+            seasonNumber: null,
+            episodeNumber: null,
+          );
+        }
       }
     });
 
@@ -1189,6 +1427,14 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       _currentEpisodeTitle = episode.title;
       _initialPosition = newPosition;
     });
+
+    ref
+        .read(currentPlayingContentProvider.notifier)
+        .state = CurrentPlayingContent(
+      contentId: widget.contentItem.id,
+      seasonNumber: seasonNumber,
+      episodeNumber: episodeNumber,
+    );
   }
 
   Widget _buildDownloadButton(ContentDetails details) {
@@ -1425,6 +1671,15 @@ class _VideoPlayerWidgetWrapperState extends State<_VideoPlayerWidgetWrapper> {
       return (state as dynamic).videoController;
     }
     return null;
+  }
+
+  Duration get currentPosition {
+    final state = _videoPlayerWidgetKey.currentState;
+    if (state != null &&
+        state.runtimeType.toString() == '_VideoPlayerWidgetState') {
+      return (state as dynamic).currentPosition as Duration;
+    }
+    return Duration.zero;
   }
 
   void transferOwnership() {

@@ -140,15 +140,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       : () => context.go(SignupScreen.path),
                 ),
                 const Spacer(),
-                Center(
-                  child: TextButton.icon(
-                    onPressed: isLoading
-                        ? null
-                        : () => context.go(SignupScreen.path),
-                    icon: const Icon(Icons.arrow_forward),
-                    label: const Text('New here? Sign up'),
-                  ),
-                ),
               ],
             ),
           ),

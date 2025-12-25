@@ -51,6 +51,14 @@ class PipNotifier extends StateNotifier<PipState> {
   void updatePosition(Offset position) {
     state = state.copyWith(position: position);
   }
+
+  void updateSize(double width, double height) {
+    state = state.copyWith(width: width, height: height);
+  }
+
+  void updatePositionAndSize(Offset position, double width, double height) {
+    state = state.copyWith(position: position, width: width, height: height);
+  }
 }
 
 final pipProvider = StateNotifierProvider<PipNotifier, PipState>((ref) {

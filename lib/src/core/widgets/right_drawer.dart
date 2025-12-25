@@ -27,36 +27,35 @@ class RightDrawer extends ConsumerWidget {
       child: SafeArea(
         child: Column(
           children: [
-            if (!isOffline)
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 14,
-                ),
-                decoration: const BoxDecoration(color: AppColors.surfaceAlt),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: InkWell(
-                        onTap: () {
-                          Navigator.of(context).pop();
-                          context.push(ProfileScreen.path);
-                        },
-                        borderRadius: BorderRadius.circular(6),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          child: Text(
-                            session?.user.name ?? 'Guest',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.primary,
-                            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: const BoxDecoration(color: AppColors.surfaceAlt),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: isOffline
+                          ? null
+                          : () {
+                              Navigator.of(context).pop();
+                              context.push(ProfileScreen.path);
+                            },
+                      borderRadius: BorderRadius.circular(6),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Text(
+                          session?.user.name ?? 'Guest',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
                           ),
                         ),
                       ),
                     ),
-                    const SizedBox.shrink(),
+                  ),
+                  const SizedBox.shrink(),
+                  if (!isOffline)
                     IconButton(
                       tooltip: 'Logout',
                       icon: const Icon(
@@ -67,9 +66,9 @@ class RightDrawer extends ConsumerWidget {
                         ref.read(authControllerProvider.notifier).logout();
                       },
                     ),
-                  ],
-                ),
+                ],
               ),
+            ),
             Expanded(
               child: SingleChildScrollView(
                 child: Padding(
@@ -96,32 +95,27 @@ class RightDrawer extends ConsumerWidget {
                                   ),
                             ),
                           ),
-                          IconButton(
-                            tooltip: isOffline
-                                ? 'Sync disabled in offline mode'
-                                : 'Sync Availability',
-                            icon: Icon(
-                              Icons.sync,
-                              color: isOffline
-                                  ? AppColors.textLow
-                                  : AppColors.primary,
-                              size: 20,
+                          if (!isOffline)
+                            IconButton(
+                              tooltip: 'Sync Availability',
+                              icon: const Icon(
+                                Icons.sync,
+                                color: AppColors.primary,
+                                size: 20,
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              onPressed: () {
+                                Navigator.of(context).pop();
+                                ref
+                                    .read(
+                                      ftpAvailabilityControllerProvider
+                                          .notifier,
+                                    )
+                                    .reset();
+                                context.push(ServerScanScreen.path);
+                              },
                             ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            onPressed: isOffline
-                                ? null
-                                : () {
-                                    Navigator.of(context).pop();
-                                    ref
-                                        .read(
-                                          ftpAvailabilityControllerProvider
-                                              .notifier,
-                                        )
-                                        .reset();
-                                    context.push(ServerScanScreen.path);
-                                  },
-                          ),
                         ],
                       ),
                       const SizedBox(height: 12),

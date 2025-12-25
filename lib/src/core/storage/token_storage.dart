@@ -11,6 +11,7 @@ class TokenStorage {
   final FlutterSecureStorage _storage;
 
   static const _key = 'auth_token';
+  static const _userNameKey = 'user_name';
 
   AndroidOptions get _androidOptions =>
       const AndroidOptions(resetOnError: true);
@@ -48,6 +49,39 @@ class TokenStorage {
     try {
       await _storage.delete(
         key: _key,
+        aOptions: _androidOptions,
+        iOptions: _iosOptions,
+      );
+    } catch (_) {}
+  }
+
+  Future<String?> readUserName() async {
+    try {
+      return await _storage.read(
+        key: _userNameKey,
+        aOptions: _androidOptions,
+        iOptions: _iosOptions,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> writeUserName(String userName) async {
+    try {
+      await _storage.write(
+        key: _userNameKey,
+        value: userName,
+        aOptions: _androidOptions,
+        iOptions: _iosOptions,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> deleteUserName() async {
+    try {
+      await _storage.delete(
+        key: _userNameKey,
         aOptions: _androidOptions,
         iOptions: _iosOptions,
       );
