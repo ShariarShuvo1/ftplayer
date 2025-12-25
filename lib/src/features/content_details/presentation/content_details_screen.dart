@@ -57,6 +57,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   Duration? _initialPosition;
   final GlobalKey<_VideoPlayerWidgetWrapperState> _videoPlayerKey = GlobalKey();
   AnimationController? _pipTransitionController;
+  final double _pipTriggerFraction = 0.2;
 
   @override
   void initState() {
@@ -66,7 +67,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       _initialPosition = widget.contentItem.initialProgress;
     }
 
-    // Log offline content loading once
     if (widget.contentItem.initialData != null) {
       _logger.i(
         'Loading offline content from metadata: ${widget.contentItem.title}',
@@ -83,7 +83,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       }
     }
 
-    // Priority 1: Check if returning from PIP
     final pipState = ref.read(pipProvider);
     if (!_activatedPipFromHere &&
         pipState.isActive &&
@@ -99,19 +98,16 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           _receivedPlayer = pipState.player;
           _receivedVideoController = pipState.videoController;
 
-          // Restore episode state for series
           _currentVideoUrl = pipState.currentVideoUrl;
           _currentSeasonNumber = pipState.currentSeasonNumber;
           _currentEpisodeNumber = pipState.currentEpisodeNumber;
           _currentEpisodeId = pipState.currentEpisodeId;
           _currentEpisodeTitle = pipState.currentEpisodeTitle;
 
-          // Trigger animation after first frame
           WidgetsBinding.instance.addPostFrameCallback((_) {
             _animatePipToVideoPlayer(pipState);
           });
 
-          // Update providers after build completes
           Future.microtask(() {
             ref
                 .read(currentPlayingContentProvider.notifier)
@@ -133,7 +129,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       }
     }
 
-    // Priority 2: Try to restore from playback cache
     final playbackCache = ref.read(playbackStateProvider);
     if (playbackCache != null &&
         playbackCache.contentId == widget.contentItem.id) {
@@ -272,8 +267,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
   @override
   void deactivate() {
-    // Cache the playback state in deactivate (before dispose), but NOT if PIP is active
-    // (because the player belongs to PIP now)
     try {
       final pipState = ref.read(pipProvider);
       final videoPlayerState = _videoPlayerKey.currentState;
@@ -325,10 +318,8 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   Future<void> _animatePipToVideoPlayer(PipState pipState) async {
     if (!mounted) return;
 
-    // Deactivate PIP to remove overlay
     ref.read(pipProvider.notifier).deactivatePip(disposePlayer: false);
 
-    // Wait a frame for the PIP overlay to be removed
     await Future.delayed(const Duration(milliseconds: 50));
 
     if (!mounted) return;
@@ -337,7 +328,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     final targetWidth = size.width;
     final targetHeight = 250.0;
 
-    // Create overlay entry for animation
     final overlay = Overlay.of(context);
     late OverlayEntry overlayEntry;
 
@@ -413,6 +403,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   }
 
   void _handleVerticalDragUpdate(DragUpdateDetails details) {
+    if (_isVideoPlayerFullscreen) return;
     setState(() {
       _isDragging = true;
       _dragOffset += details.delta.dy;
@@ -421,7 +412,8 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   }
 
   void _handleVerticalDragEnd(DragEndDetails details) {
-    final threshold = MediaQuery.of(context).size.height * 0.5;
+    if (_isVideoPlayerFullscreen) return;
+    final threshold = MediaQuery.of(context).size.height * _pipTriggerFraction;
 
     if (_dragOffset > threshold) {
       _activatePipMode();
@@ -435,7 +427,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
   Widget _buildDragProgressIndicator() {
     final screenHeight = MediaQuery.of(context).size.height;
-    final threshold = screenHeight * 0.5;
+    final threshold = screenHeight * _pipTriggerFraction;
     final progress = (_dragOffset / threshold).clamp(0.0, 1.0);
 
     return Column(
@@ -696,13 +688,15 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                           child: AnimatedOpacity(
                             opacity:
                                 _dragOffset >
-                                    MediaQuery.of(context).size.height * 0.5
+                                    MediaQuery.of(context).size.height *
+                                        _pipTriggerFraction
                                 ? 1.0
                                 : 0.6,
                             duration: const Duration(milliseconds: 150),
                             child: Text(
                               _dragOffset >
-                                      MediaQuery.of(context).size.height * 0.5
+                                      MediaQuery.of(context).size.height *
+                                          _pipTriggerFraction
                                   ? 'Release to activate PiP'
                                   : 'Keep dragging',
                               style: TextStyle(
@@ -779,13 +773,15 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                             child: AnimatedOpacity(
                               opacity:
                                   _dragOffset >
-                                      MediaQuery.of(context).size.height * 0.5
+                                      MediaQuery.of(context).size.height *
+                                          _pipTriggerFraction
                                   ? 1.0
                                   : 0.6,
                               duration: const Duration(milliseconds: 150),
                               child: Text(
                                 _dragOffset >
-                                        MediaQuery.of(context).size.height * 0.5
+                                        MediaQuery.of(context).size.height *
+                                            _pipTriggerFraction
                                     ? 'Release to activate PiP'
                                     : 'Keep dragging',
                                 style: TextStyle(
@@ -895,7 +891,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   }
 
   Widget _buildOfflineContent(ContentDetails details) {
-    // For series, select first episode if no video URL yet
     if (details.isSeries &&
         details.seasons != null &&
         details.seasons!.isNotEmpty) {
@@ -959,7 +954,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           }
         } else if (_currentSeasonNumber == null &&
             details.seasons!.isNotEmpty) {
-          // Fall back to first season if not set
           _currentSeasonNumber = _extractSeasonNumber(
             details.seasons!.first.seasonName,
           );
@@ -1233,25 +1227,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
               Positioned(
                 top: 0,
                 right: 0,
-                child: SafeArea(
-                  child: _isVideoPlayerFullscreen
-                      ? const SizedBox.shrink()
-                      : IconButton(
-                          icon: Container(
-                            padding: const EdgeInsets.all(6),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.5),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.close,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                          onPressed: () => Navigator.of(context).pop(),
-                        ),
-                ),
+                child: SafeArea(child: const SizedBox.shrink()),
               ),
             ],
           )
