@@ -124,19 +124,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ? AppColors.textLow
                 : AppColors.primary,
           ),
-          loading: () => const SizedBox(
-            width: 48,
-            height: 48,
-            child: Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-                ),
-              ),
-            ),
+          loading: () => IconButton(
+            tooltip: 'Loading servers...',
+            onPressed: null,
+            icon: const Icon(Icons.search),
+            color: AppColors.textLow,
           ),
           error: (_, _) => IconButton(
             tooltip: 'Search',
@@ -161,21 +153,112 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           Column(
             children: [
               Expanded(
-                child: homeContentAsync.when(
-                  data: (homeContent) {
-                    final hasFeatured = homeContent.featured.isNotEmpty;
-                    final hasTrending = homeContent.trending.isNotEmpty;
-                    final hasLatest = homeContent.latest.isNotEmpty;
-                    final hasTvSeries = homeContent.tvSeries.isNotEmpty;
-                    final hasAnyContent =
-                        hasFeatured || hasTrending || hasLatest || hasTvSeries;
+                child: workingServersAsync.when(
+                  data: (workingServers) {
+                    if (workingServers.isEmpty && !isOffline) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.storage,
+                              size: 64,
+                              color: AppColors.textLow,
+                            ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No active FTP servers',
+                              style: TextStyle(
+                                color: AppColors.textMid,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 32),
+                              child: Text(
+                                'Add and activate FTP servers to browse content',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: AppColors.textLow,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
 
-                    if (!hasAnyContent) {
-                      if (isOffline) {
-                        return downloadedContentAsync.when(
-                          data: (downloads) {
-                            if (downloads.isEmpty) {
-                              return Center(
+                    return homeContentAsync.when(
+                      data: (homeContent) {
+                        final hasFeatured = homeContent.featured.isNotEmpty;
+                        final hasTrending = homeContent.trending.isNotEmpty;
+                        final hasLatest = homeContent.latest.isNotEmpty;
+                        final hasTvSeries = homeContent.tvSeries.isNotEmpty;
+                        final hasAnyContent =
+                            hasFeatured ||
+                            hasTrending ||
+                            hasLatest ||
+                            hasTvSeries;
+
+                        if (!hasAnyContent) {
+                          if (isOffline) {
+                            return downloadedContentAsync.when(
+                              data: (downloads) {
+                                if (downloads.isEmpty) {
+                                  return Center(
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.cloud_off,
+                                          size: 64,
+                                          color: AppColors.textLow,
+                                        ),
+                                        const SizedBox(height: 16),
+                                        const Text(
+                                          'You are offline',
+                                          style: TextStyle(
+                                            color: AppColors.textMid,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        const Text(
+                                          'No downloaded content available',
+                                          style: TextStyle(
+                                            color: AppColors.textLow,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }
+
+                                final offlineItems = _buildOfflineContentItems(
+                                  downloads,
+                                );
+                                return ListView(
+                                  children: [
+                                    OfflineContentGrid(
+                                      title: 'My Downloads',
+                                      items: offlineItems,
+                                      icon: Icons.download_done,
+                                    ),
+                                    const SizedBox(height: 32),
+                                  ],
+                                );
+                              },
+                              loading: () => const Center(
+                                child: CircularProgressIndicator(
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                              error: (_, _) => Center(
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
@@ -194,7 +277,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                     ),
                                     const SizedBox(height: 8),
                                     const Text(
-                                      'No downloaded content available',
+                                      'Connect to internet to load content',
                                       style: TextStyle(
                                         color: AppColors.textLow,
                                         fontSize: 14,
@@ -202,29 +285,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                     ),
                                   ],
                                 ),
-                              );
-                            }
+                              ),
+                            );
+                          }
 
-                            final offlineItems = _buildOfflineContentItems(
-                              downloads,
-                            );
-                            return ListView(
-                              children: [
-                                OfflineContentGrid(
-                                  title: 'My Downloads',
-                                  items: offlineItems,
-                                  icon: Icons.download_done,
-                                ),
-                                const SizedBox(height: 32),
-                              ],
-                            );
-                          },
-                          loading: () => const Center(
-                            child: CircularProgressIndicator(
-                              color: AppColors.primary,
-                            ),
-                          ),
-                          error: (_, _) => Center(
+                          return Center(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
@@ -235,7 +300,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 ),
                                 const SizedBox(height: 16),
                                 const Text(
-                                  'You are offline',
+                                  'No content available',
                                   style: TextStyle(
                                     color: AppColors.textMid,
                                     fontSize: 16,
@@ -243,7 +308,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 const Text(
-                                  'Connect to internet to load content',
+                                  'Try refreshing or adding more servers',
                                   style: TextStyle(
                                     color: AppColors.textLow,
                                     fontSize: 14,
@@ -251,120 +316,138 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 ),
                               ],
                             ),
+                          );
+                        }
+
+                        return RefreshIndicator(
+                          onRefresh: () async {
+                            if (!isOffline) {
+                              ref.invalidate(homeContentProvider);
+                            }
+                          },
+                          color: AppColors.primary,
+                          backgroundColor: AppColors.surface,
+                          child: ListView(
+                            children: [
+                              if (hasFeatured) ...[
+                                const SizedBox(height: 16),
+                                SizedBox(
+                                  height: 220,
+                                  child: ListView.builder(
+                                    scrollDirection: Axis.horizontal,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    physics: const PageScrollPhysics(),
+                                    itemCount: homeContent.featured.length,
+                                    itemBuilder: (context, index) {
+                                      return FeaturedCard(
+                                        content: homeContent.featured[index],
+                                      );
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(height: 32),
+                              ],
+                              if (hasTrending) ...[
+                                ContentSection(
+                                  title: 'Trending Now',
+                                  items: homeContent.trending,
+                                  icon: Icons.local_fire_department,
+                                ),
+                                const SizedBox(height: 32),
+                              ],
+                              if (hasLatest) ...[
+                                ContentSection(
+                                  title: 'Latest Movies',
+                                  items: homeContent.latest,
+                                  icon: Icons.new_releases,
+                                ),
+                                const SizedBox(height: 32),
+                              ],
+                              if (hasTvSeries) ...[
+                                ContentSection(
+                                  title: 'TV Series',
+                                  items: homeContent.tvSeries,
+                                  icon: Icons.tv,
+                                ),
+                                const SizedBox(height: 32),
+                              ],
+                            ],
                           ),
                         );
-                      }
-
-                      return Center(
+                      },
+                      loading: () => const Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(
-                              Icons.cloud_off,
-                              size: 64,
-                              color: AppColors.textLow,
-                            ),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'No servers available',
+                            CircularProgressIndicator(color: AppColors.primary),
+                            SizedBox(height: 16),
+                            Text(
+                              'Loading content...',
                               style: TextStyle(
                                 color: AppColors.textMid,
-                                fontSize: 16,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            const Text(
-                              'Add working FTP servers to see content',
-                              style: TextStyle(
-                                color: AppColors.textLow,
                                 fontSize: 14,
                               ),
                             ),
                           ],
                         ),
-                      );
-                    }
+                      ),
+                      error: (error, stack) {
+                        if (isOffline) {
+                          return downloadedContentAsync.when(
+                            data: (downloads) {
+                              if (downloads.isEmpty) {
+                                return Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.cloud_off,
+                                        size: 64,
+                                        color: AppColors.textLow,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      const Text(
+                                        'You are offline',
+                                        style: TextStyle(
+                                          color: AppColors.textMid,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      const Text(
+                                        'No downloaded content available',
+                                        style: TextStyle(
+                                          color: AppColors.textLow,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }
 
-                    return RefreshIndicator(
-                      onRefresh: () async {
-                        if (!isOffline) {
-                          ref.invalidate(homeContentProvider);
-                        }
-                      },
-                      color: AppColors.primary,
-                      backgroundColor: AppColors.surface,
-                      child: ListView(
-                        children: [
-                          if (hasFeatured) ...[
-                            const SizedBox(height: 16),
-                            SizedBox(
-                              height: 220,
-                              child: ListView.builder(
-                                scrollDirection: Axis.horizontal,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                ),
-                                physics: const PageScrollPhysics(),
-                                itemCount: homeContent.featured.length,
-                                itemBuilder: (context, index) {
-                                  return FeaturedCard(
-                                    content: homeContent.featured[index],
-                                  );
-                                },
+                              final offlineItems = _buildOfflineContentItems(
+                                downloads,
+                              );
+                              return ListView(
+                                children: [
+                                  OfflineContentGrid(
+                                    title: 'My Downloads',
+                                    items: offlineItems,
+                                    icon: Icons.download_done,
+                                  ),
+                                  const SizedBox(height: 32),
+                                ],
+                              );
+                            },
+                            loading: () => const Center(
+                              child: CircularProgressIndicator(
+                                color: AppColors.primary,
                               ),
                             ),
-                            const SizedBox(height: 32),
-                          ],
-                          if (hasTrending) ...[
-                            ContentSection(
-                              title: 'Trending Now',
-                              items: homeContent.trending,
-                              icon: Icons.local_fire_department,
-                            ),
-                            const SizedBox(height: 32),
-                          ],
-                          if (hasLatest) ...[
-                            ContentSection(
-                              title: 'Latest Movies',
-                              items: homeContent.latest,
-                              icon: Icons.new_releases,
-                            ),
-                            const SizedBox(height: 32),
-                          ],
-                          if (hasTvSeries) ...[
-                            ContentSection(
-                              title: 'TV Series',
-                              items: homeContent.tvSeries,
-                              icon: Icons.tv,
-                            ),
-                            const SizedBox(height: 32),
-                          ],
-                        ],
-                      ),
-                    );
-                  },
-                  loading: () => const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircularProgressIndicator(color: AppColors.primary),
-                        SizedBox(height: 16),
-                        Text(
-                          'Loading content...',
-                          style: TextStyle(
-                            color: AppColors.textMid,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  error: (error, stack) {
-                    if (isOffline) {
-                      return downloadedContentAsync.when(
-                        data: (downloads) {
-                          if (downloads.isEmpty) {
-                            return Center(
+                            error: (_, _) => Center(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -383,7 +466,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                   ),
                                   const SizedBox(height: 8),
                                   const Text(
-                                    'No downloaded content available',
+                                    'Connect to internet to load content',
                                     style: TextStyle(
                                       color: AppColors.textLow,
                                       fontSize: 14,
@@ -391,102 +474,115 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                   ),
                                 ],
                               ),
-                            );
-                          }
+                            ),
+                          );
+                        }
 
-                          final offlineItems = _buildOfflineContentItems(
-                            downloads,
-                          );
-                          return ListView(
-                            children: [
-                              OfflineContentGrid(
-                                title: 'My Downloads',
-                                items: offlineItems,
-                                icon: Icons.download_done,
-                              ),
-                              const SizedBox(height: 32),
-                            ],
-                          );
-                        },
-                        loading: () => const Center(
-                          child: CircularProgressIndicator(
-                            color: AppColors.primary,
-                          ),
-                        ),
-                        error: (_, _) => Center(
+                        return Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
-                                Icons.cloud_off,
+                                Icons.error_outline,
                                 size: 64,
-                                color: AppColors.textLow,
+                                color: AppColors.danger,
                               ),
                               const SizedBox(height: 16),
                               const Text(
-                                'You are offline',
+                                'Failed to load content',
                                 style: TextStyle(
                                   color: AppColors.textMid,
                                   fontSize: 16,
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              const Text(
-                                'Connect to internet to load content',
-                                style: TextStyle(
-                                  color: AppColors.textLow,
-                                  fontSize: 14,
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 32,
                                 ),
+                                child: Text(
+                                  error.toString(),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: AppColors.textLow,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              ElevatedButton(
+                                onPressed: () =>
+                                    ref.invalidate(homeContentProvider),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.primary,
+                                  foregroundColor: AppColors.black,
+                                ),
+                                child: const Text('Retry'),
                               ),
                             ],
                           ),
-                        ),
-                      );
-                    }
-
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.error_outline,
-                            size: 64,
-                            color: AppColors.danger,
-                          ),
-                          const SizedBox(height: 16),
-                          const Text(
-                            'Failed to load content',
-                            style: TextStyle(
-                              color: AppColors.textMid,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 32),
-                            child: Text(
-                              error.toString(),
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: AppColors.textLow,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: () =>
-                                ref.invalidate(homeContentProvider),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary,
-                              foregroundColor: AppColors.black,
-                            ),
-                            child: const Text('Retry'),
-                          ),
-                        ],
-                      ),
+                        );
+                      },
                     );
                   },
+                  loading: () => const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CircularProgressIndicator(color: AppColors.primary),
+                        SizedBox(height: 16),
+                        Text(
+                          'Loading servers...',
+                          style: TextStyle(
+                            color: AppColors.textMid,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  error: (error, stack) => Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.error_outline,
+                          size: 64,
+                          color: AppColors.danger,
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Failed to load servers',
+                          style: TextStyle(
+                            color: AppColors.textMid,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 32),
+                          child: Text(
+                            error.toString(),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: AppColors.textLow,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: () =>
+                              ref.invalidate(workingFtpServersProvider),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: AppColors.black,
+                          ),
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
               const OfflineModeBanner(),

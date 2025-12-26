@@ -217,6 +217,15 @@ class RightDrawer extends ConsumerWidget {
               );
             }
 
+            if (workingServers.isEmpty && allServers.isNotEmpty) {
+              return Column(
+                children: List.generate(allServers.length, (index) {
+                  final server = allServers[index];
+                  return _buildServerTile(context, server, false);
+                }),
+              );
+            }
+
             final workingIds = workingServers.map((s) => s.id).toSet();
             final workingServersList = allServers
                 .where((s) => workingIds.contains(s.id))
@@ -274,7 +283,25 @@ class RightDrawer extends ConsumerWidget {
           },
         );
       },
-      loading: () => const CircularProgressIndicator(),
+      loading: () => Column(
+        children: [
+          const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Loading servers...',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textMid),
+          ),
+        ],
+      ),
       error: (e, _) => Text(
         isOffline ? 'Servers unavailable offline' : 'Error loading servers',
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
