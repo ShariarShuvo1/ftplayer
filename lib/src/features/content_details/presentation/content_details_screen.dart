@@ -49,6 +49,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   String? _currentEpisodeId;
   String? _currentEpisodeTitle;
   double _dragOffset = 0.0;
+  double _dragHorizontalPosition = 0.0;
   bool _isDragging = false;
   bool _activatedPipFromHere = false;
   Player? _receivedPlayer;
@@ -57,7 +58,44 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   Duration? _initialPosition;
   final GlobalKey<_VideoPlayerWidgetWrapperState> _videoPlayerKey = GlobalKey();
   AnimationController? _pipTransitionController;
-  final double _pipTriggerFraction = 0.2;
+  final double _pipTriggerFraction = 0.4;
+  final double _sectionHideFraction = 0.2;
+
+  double _getSwipeProgress(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    return (_dragOffset / (screenHeight * _pipTriggerFraction)).clamp(0.0, 1.0);
+  }
+
+  double _getSectionHideProgress(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final hideThreshold = screenHeight * _sectionHideFraction;
+    return (_dragOffset / hideThreshold).clamp(0.0, 1.0);
+  }
+
+  double _getVideoScaleProgress(BuildContext context) {
+    const pipHeight = 100.0;
+    final videoPlayerHeight = 250.0;
+
+    final targetScale = (pipHeight / videoPlayerHeight);
+    return 1.0 - ((_getSwipeProgress(context) * (1.0 - targetScale)));
+  }
+
+  double _getVideoCornerRadiusProgress(BuildContext context) {
+    return _getSwipeProgress(context);
+  }
+
+  double _getVideoHorizontalOffset(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final progress = _getSwipeProgress(context);
+    const pipWidth = 180.0;
+
+    final snapToLeft = _dragHorizontalPosition < screenWidth / 2;
+    final targetOffset = snapToLeft
+        ? 16.0 - (screenWidth / 2 - pipWidth / 2)
+        : (screenWidth - pipWidth - 16.0) - (screenWidth / 2 - pipWidth / 2);
+
+    return targetOffset * progress;
+  }
 
   @override
   void initState() {
@@ -407,6 +445,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     setState(() {
       _isDragging = true;
       _dragOffset += details.delta.dy;
+      _dragHorizontalPosition = details.globalPosition.dx;
       _dragOffset = _dragOffset.clamp(0.0, double.infinity);
     });
   }
@@ -423,56 +462,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
         _isDragging = false;
       });
     }
-  }
-
-  Widget _buildDragProgressIndicator() {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final threshold = screenHeight * _pipTriggerFraction;
-    final progress = (_dragOffset / threshold).clamp(0.0, 1.0);
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                AppColors.primary.withValues(alpha: 0.95),
-                AppColors.primary.withValues(alpha: 0.85),
-              ],
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.primary.withValues(alpha: 0.5),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              SizedBox.expand(
-                child: CustomPaint(
-                  painter: _CircleProgressPainter(
-                    progress: progress,
-                    strokeWidth: 2.5,
-                    backgroundColor: Colors.white.withValues(alpha: 0.15),
-                    progressColor: Colors.white,
-                  ),
-                ),
-              ),
-              Icon(Icons.arrow_downward, color: Colors.white, size: 20),
-            ],
-          ),
-        ),
-      ],
-    );
   }
 
   void _activatePipMode() async {
@@ -505,7 +494,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
       final screenWidth = MediaQuery.of(context).size.width;
       const pipWidth = 180.0;
-      final snapToLeft = _dragOffset < screenWidth / 2;
+      final snapToLeft = _dragHorizontalPosition < screenWidth / 2;
       final initialPosition = Offset(
         snapToLeft ? 16 : screenWidth - pipWidth - 16,
         _dragOffset.clamp(0, MediaQuery.of(context).size.height - 100),
@@ -657,67 +646,39 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
         onPopInvokedWithResult: (didPop, result) {},
         child: Scaffold(
           backgroundColor: AppColors.black,
-          body: Stack(
-            children: [
-              GestureDetector(
-                onVerticalDragUpdate: _handleVerticalDragUpdate,
-                onVerticalDragEnd: _handleVerticalDragEnd,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  transform: Matrix4.translationValues(0, _dragOffset, 0),
-                  child: AnimatedOpacity(
-                    duration: const Duration(milliseconds: 200),
-                    opacity: _isDragging ? 0.9 - (_dragOffset / 1000) : 1.0,
-                    child: _buildOfflineContent(details),
+          body: SafeArea(
+            bottom: false,
+            child: Stack(
+              children: [
+                if (_isDragging)
+                  Positioned.fill(
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 100),
+                      opacity:
+                          (1.0 - _getSwipeProgress(context)).clamp(0.0, 1.0) *
+                          0.25,
+                      child: Container(color: AppColors.black),
+                    ),
                   ),
-                ),
-              ),
-              if (_isDragging && _dragOffset > 0)
-                Positioned(
-                  top: 60.0,
-                  left: 0,
-                  right: 0,
-                  child: GestureDetector(
-                    onVerticalDragUpdate: (_) {},
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Center(child: _buildDragProgressIndicator()),
-                        const SizedBox(height: 16),
-                        Center(
-                          child: AnimatedOpacity(
-                            opacity:
-                                _dragOffset >
-                                    MediaQuery.of(context).size.height *
-                                        _pipTriggerFraction
-                                ? 1.0
-                                : 0.6,
-                            duration: const Duration(milliseconds: 150),
-                            child: Text(
-                              _dragOffset >
-                                      MediaQuery.of(context).size.height *
-                                          _pipTriggerFraction
-                                  ? 'Release to activate PiP'
-                                  : 'Keep dragging',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                shadows: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.6),
-                                    blurRadius: 8,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                GestureDetector(
+                  onVerticalDragUpdate: _handleVerticalDragUpdate,
+                  onVerticalDragEnd: _handleVerticalDragEnd,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    transform: Matrix4.translationValues(0, _dragOffset, 0),
+                    child: Container(
+                      color: _isDragging
+                          ? AppColors.surface.withValues(
+                              alpha: (1.0 - (_getSwipeProgress(context) * 0.9))
+                                  .clamp(0.05, 1.0),
+                            )
+                          : AppColors.surface,
+                      child: _buildOfflineContent(details),
                     ),
                   ),
                 ),
-            ],
+              ],
+            ),
           ),
         ),
       );
@@ -736,104 +697,75 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       canPop: true,
       onPopInvokedWithResult: (didPop, result) {},
       child: Scaffold(
-        backgroundColor: AppColors.black,
-        body: detailsAsync.when(
-          data: (details) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _selectInitialEpisode(details);
-            });
-            return Stack(
-              children: [
-                GestureDetector(
-                  onVerticalDragUpdate: _handleVerticalDragUpdate,
-                  onVerticalDragEnd: _handleVerticalDragEnd,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    transform: Matrix4.translationValues(0, _dragOffset, 0),
-                    child: AnimatedOpacity(
-                      duration: const Duration(milliseconds: 200),
-                      opacity: _isDragging ? 0.9 - (_dragOffset / 1000) : 1.0,
-                      child: _buildContent(details),
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          bottom: false,
+          child: detailsAsync.when(
+            data: (details) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _selectInitialEpisode(details);
+              });
+              return Stack(
+                children: [
+                  if (_isDragging)
+                    Positioned.fill(
+                      child: AnimatedOpacity(
+                        duration: const Duration(milliseconds: 100),
+                        opacity:
+                            (1.0 - _getSwipeProgress(context)).clamp(0.0, 1.0) *
+                            0.25,
+                        child: Container(color: AppColors.black),
+                      ),
                     ),
-                  ),
-                ),
-                if (_isDragging && _dragOffset > 0)
-                  Positioned(
-                    top: 60.0,
-                    left: 0,
-                    right: 0,
-                    child: GestureDetector(
-                      onVerticalDragUpdate: (_) {},
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Center(child: _buildDragProgressIndicator()),
-                          const SizedBox(height: 16),
-                          Center(
-                            child: AnimatedOpacity(
-                              opacity:
-                                  _dragOffset >
-                                      MediaQuery.of(context).size.height *
-                                          _pipTriggerFraction
-                                  ? 1.0
-                                  : 0.6,
-                              duration: const Duration(milliseconds: 150),
-                              child: Text(
-                                _dragOffset >
-                                        MediaQuery.of(context).size.height *
-                                            _pipTriggerFraction
-                                    ? 'Release to activate PiP'
-                                    : 'Keep dragging',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  shadows: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.6,
-                                      ),
-                                      blurRadius: 8,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                  GestureDetector(
+                    onVerticalDragUpdate: _handleVerticalDragUpdate,
+                    onVerticalDragEnd: _handleVerticalDragEnd,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      transform: Matrix4.translationValues(0, _dragOffset, 0),
+                      child: Container(
+                        color: _isDragging
+                            ? AppColors.surface.withValues(
+                                alpha:
+                                    (1.0 - (_getSwipeProgress(context) * 0.9))
+                                        .clamp(0.05, 1.0),
+                              )
+                            : AppColors.surface,
+                        child: _buildContent(details),
                       ),
                     ),
                   ),
-              ],
-            );
-          },
-          loading: () => const Center(
-            child: CircularProgressIndicator(color: AppColors.primary),
-          ),
-          error: (error, stack) => Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(
-                  Icons.error_outline,
-                  color: AppColors.danger,
-                  size: 64,
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Failed to load content',
-                  style: TextStyle(color: AppColors.textMid, fontSize: 16),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  error.toString(),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: AppColors.textLow,
-                    fontSize: 12,
+                ],
+              );
+            },
+            loading: () => const Center(
+              child: CircularProgressIndicator(color: AppColors.primary),
+            ),
+            error: (error, stack) => Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.error_outline,
+                    color: AppColors.danger,
+                    size: 64,
                   ),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Failed to load content',
+                    style: TextStyle(color: AppColors.textMid, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    error.toString(),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AppColors.textLow,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -966,67 +898,99 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       }
     }
 
+    final sectionOpacity = _isDragging
+        ? 1.0 - _getSectionHideProgress(context)
+        : 1.0;
+    final videoScale = _isDragging ? _getVideoScaleProgress(context) : 1.0;
+    final videoHorizontalOffset = _isDragging
+        ? _getVideoHorizontalOffset(context)
+        : 0.0;
+
     return Column(
       children: [
         if (videoUrl != null && videoUrl.isNotEmpty)
-          Stack(
-            children: [
-              Builder(
-                builder: (context) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    _notifyPlayerReceived();
-                  });
+          Transform.translate(
+            offset: Offset(videoHorizontalOffset, 0),
+            child: Transform.scale(
+              scale: videoScale,
+              alignment: Alignment.topCenter,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(
+                  _getVideoCornerRadiusProgress(context) * 12.0,
+                ),
+                child: Stack(
+                  children: [
+                    Builder(
+                      builder: (context) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          _notifyPlayerReceived();
+                        });
 
-                  Duration? resolvedInitialPosition = _initialPosition;
+                        Duration? resolvedInitialPosition = _initialPosition;
 
-                  return _VideoPlayerWidgetWrapper(
-                    key: _videoPlayerKey,
-                    videoUrl: _resolveVideoUrl(ref, videoUrl),
-                    autoPlay: true,
-                    initialPosition: resolvedInitialPosition,
-                    receivedPlayer: _receivedPlayer,
-                    receivedController: _receivedVideoController,
-                    onProgressUpdate: (currentTime, duration) {
-                      _initialPosition = Duration(seconds: currentTime.toInt());
-                    },
-                    onFullscreenChanged: (isFullscreen) {
-                      setState(() {
-                        _isVideoPlayerFullscreen = isFullscreen;
-                      });
-                    },
-                  );
-                },
+                        return _VideoPlayerWidgetWrapper(
+                          key: _videoPlayerKey,
+                          videoUrl: _resolveVideoUrl(ref, videoUrl),
+                          autoPlay: true,
+                          initialPosition: resolvedInitialPosition,
+                          receivedPlayer: _receivedPlayer,
+                          receivedController: _receivedVideoController,
+                          onProgressUpdate: (currentTime, duration) {
+                            _initialPosition = Duration(
+                              seconds: currentTime.toInt(),
+                            );
+                          },
+                          onFullscreenChanged: (isFullscreen) {
+                            setState(() {
+                              _isVideoPlayerFullscreen = isFullscreen;
+                            });
+                          },
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
-            ],
+            ),
           ),
         Expanded(
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ContentDetailsSection(
-                  details: details,
-                  onWatchStatusDropdown: (_) => const SizedBox.shrink(),
-                  onDownloadButton: null,
+                AnimatedOpacity(
+                  duration: const Duration(milliseconds: 150),
+                  opacity: sectionOpacity,
+                  child: ContentDetailsSection(
+                    details: details,
+                    onWatchStatusDropdown: (_) => const SizedBox.shrink(),
+                    onDownloadButton: null,
+                  ),
                 ),
                 if (details.isSeries && details.seasons != null)
-                  OfflineSeasonsSection(
-                    seasons: details.seasons!,
-                    currentSeasonNumber: _currentSeasonNumber,
-                    currentEpisodeNumber: _currentEpisodeNumber,
-                    currentEpisodeId: _currentEpisodeId,
-                    contentItem: widget.contentItem,
-                    onEpisodeSelected: (season, episode) {
-                      final seasonNum = _extractSeasonNumber(season.seasonName);
-                      final episodeNum = episode.episodeNumber ?? 1;
-                      setState(() {
-                        _currentVideoUrl = episode.link;
-                        _currentSeasonNumber = seasonNum;
-                        _currentEpisodeNumber = episodeNum;
-                        _currentEpisodeId = episode.id;
-                        _currentEpisodeTitle = episode.title;
-                      });
-                    },
+                  AnimatedOpacity(
+                    duration: const Duration(milliseconds: 150),
+                    opacity: sectionOpacity,
+                    child: OfflineSeasonsSection(
+                      seasons: details.seasons!,
+                      currentSeasonNumber: _currentSeasonNumber,
+                      currentEpisodeNumber: _currentEpisodeNumber,
+                      currentEpisodeId: _currentEpisodeId,
+                      contentItem: widget.contentItem,
+                      onEpisodeSelected: (season, episode) {
+                        final seasonNum = _extractSeasonNumber(
+                          season.seasonName,
+                        );
+                        final episodeNum = episode.episodeNumber ?? 1;
+                        setState(() {
+                          _currentVideoUrl = episode.link;
+                          _currentSeasonNumber = seasonNum;
+                          _currentEpisodeNumber = episodeNum;
+                          _currentEpisodeId = episode.id;
+                          _currentEpisodeTitle = episode.title;
+                        });
+                      },
+                    ),
                   ),
               ],
             ),
@@ -1081,155 +1045,192 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       }
     }
 
+    final sectionOpacity = _isDragging
+        ? 1.0 - _getSectionHideProgress(context)
+        : 1.0;
+    final videoScale = _isDragging ? _getVideoScaleProgress(context) : 1.0;
+    final videoHorizontalOffset = _isDragging
+        ? _getVideoHorizontalOffset(context)
+        : 0.0;
+
     return Column(
       children: [
         if (videoUrl != null && videoUrl.isNotEmpty)
-          Stack(
-            children: [
-              Builder(
-                builder: (context) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    _notifyPlayerReceived();
-                  });
-                  final workingServersAsync = ref.watch(
-                    workingFtpServersProvider,
-                  );
-                  final serverId = workingServersAsync.maybeWhen(
-                    data: (servers) => servers
-                        .where((s) => s.name == widget.contentItem.serverName)
-                        .firstOrNull
-                        ?.id,
-                    orElse: () => null,
-                  );
-
-                  Duration? resolvedInitialPosition = _initialPosition;
-
-                  if (serverId != null) {
-                    final watchHistoryAsync = ref.watch(
-                      contentWatchHistoryProvider((
-                        ftpServerId: serverId,
-                        contentId: widget.contentItem.id,
-                      )),
-                    );
-
-                    if (watchHistoryAsync.hasValue &&
-                        watchHistoryAsync.value != null) {
-                      final watchHistory = watchHistoryAsync.value!;
-                      Duration? position;
-
-                      if (_currentSeasonNumber != null &&
-                          _currentEpisodeNumber != null &&
-                          details.isSeries &&
-                          details.seasons != null &&
-                          details.seasons!.isNotEmpty) {
-                        final seasonIndex = details.seasons!.indexWhere(
-                          (s) =>
-                              _extractSeasonNumber(s.seasonName) ==
-                              _currentSeasonNumber,
+          Transform.translate(
+            offset: Offset(videoHorizontalOffset, 0),
+            child: Transform.scale(
+              scale: videoScale,
+              alignment: Alignment.topCenter,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(
+                  _getVideoCornerRadiusProgress(context) * 12.0,
+                ),
+                child: Stack(
+                  children: [
+                    Builder(
+                      builder: (context) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          _notifyPlayerReceived();
+                        });
+                        final workingServersAsync = ref.watch(
+                          workingFtpServersProvider,
+                        );
+                        final serverId = workingServersAsync.maybeWhen(
+                          data: (servers) => servers
+                              .where(
+                                (s) => s.name == widget.contentItem.serverName,
+                              )
+                              .firstOrNull
+                              ?.id,
+                          orElse: () => null,
                         );
 
-                        if (seasonIndex != -1) {
-                          final season = details.seasons![seasonIndex];
+                        Duration? resolvedInitialPosition = _initialPosition;
 
-                          if (season.episodes.isNotEmpty) {
-                            final matchingEpisode = season.episodes.where((ep) {
-                              final episodeNum = int.tryParse(
-                                ep.title.split('E').last.split(' ').first,
+                        if (serverId != null) {
+                          final watchHistoryAsync = ref.watch(
+                            contentWatchHistoryProvider((
+                              ftpServerId: serverId,
+                              contentId: widget.contentItem.id,
+                            )),
+                          );
+
+                          if (watchHistoryAsync.hasValue &&
+                              watchHistoryAsync.value != null) {
+                            final watchHistory = watchHistoryAsync.value!;
+                            Duration? position;
+
+                            if (_currentSeasonNumber != null &&
+                                _currentEpisodeNumber != null &&
+                                details.isSeries &&
+                                details.seasons != null &&
+                                details.seasons!.isNotEmpty) {
+                              final seasonIndex = details.seasons!.indexWhere(
+                                (s) =>
+                                    _extractSeasonNumber(s.seasonName) ==
+                                    _currentSeasonNumber,
                               );
-                              return episodeNum == _currentEpisodeNumber;
-                            }).firstOrNull;
 
-                            if (matchingEpisode != null) {
-                              if (watchHistory.seriesProgress != null &&
-                                  watchHistory.seriesProgress!.isNotEmpty) {
-                                try {
-                                  final backendSeason = watchHistory
-                                      .seriesProgress!
-                                      .firstWhere(
-                                        (s) =>
-                                            s.seasonNumber ==
-                                            _currentSeasonNumber,
+                              if (seasonIndex != -1) {
+                                final season = details.seasons![seasonIndex];
+
+                                if (season.episodes.isNotEmpty) {
+                                  final matchingEpisode = season.episodes.where(
+                                    (ep) {
+                                      final episodeNum = int.tryParse(
+                                        ep.title
+                                            .split('E')
+                                            .last
+                                            .split(' ')
+                                            .first,
                                       );
+                                      return episodeNum ==
+                                          _currentEpisodeNumber;
+                                    },
+                                  ).firstOrNull;
 
-                                  final backendEpisode = backendSeason.episodes
-                                      .firstWhere(
-                                        (e) =>
-                                            e.episodeNumber ==
-                                            _currentEpisodeNumber,
-                                      );
+                                  if (matchingEpisode != null) {
+                                    if (watchHistory.seriesProgress != null &&
+                                        watchHistory
+                                            .seriesProgress!
+                                            .isNotEmpty) {
+                                      try {
+                                        final backendSeason = watchHistory
+                                            .seriesProgress!
+                                            .firstWhere(
+                                              (s) =>
+                                                  s.seasonNumber ==
+                                                  _currentSeasonNumber,
+                                            );
 
-                                  if (backendEpisode.progress.currentTime > 0) {
-                                    position = Duration(
-                                      seconds: backendEpisode
-                                          .progress
-                                          .currentTime
-                                          .toInt(),
-                                    );
+                                        final backendEpisode = backendSeason
+                                            .episodes
+                                            .firstWhere(
+                                              (e) =>
+                                                  e.episodeNumber ==
+                                                  _currentEpisodeNumber,
+                                            );
+
+                                        if (backendEpisode
+                                                .progress
+                                                .currentTime >
+                                            0) {
+                                          position = Duration(
+                                            seconds: backendEpisode
+                                                .progress
+                                                .currentTime
+                                                .toInt(),
+                                          );
+                                        }
+                                      } catch (e) {
+                                        // Ignore errors when extracting episode progress
+                                      }
+                                    }
                                   }
-                                } catch (e) {
-                                  // Ignore errors when extracting episode progress
                                 }
                               }
                             }
+
+                            if (position == null &&
+                                watchHistory.progress != null &&
+                                watchHistory.progress!.currentTime > 0) {
+                              position = Duration(
+                                seconds: watchHistory.progress!.currentTime
+                                    .toInt(),
+                              );
+                            }
+
+                            if (position != null) {
+                              resolvedInitialPosition = position;
+                            }
                           }
                         }
-                      }
 
-                      if (position == null &&
-                          watchHistory.progress != null &&
-                          watchHistory.progress!.currentTime > 0) {
-                        position = Duration(
-                          seconds: watchHistory.progress!.currentTime.toInt(),
+                        return _VideoPlayerWidgetWrapper(
+                          key: _videoPlayerKey,
+                          videoUrl: _resolveVideoUrl(ref, videoUrl),
+                          autoPlay: true,
+                          initialPosition: resolvedInitialPosition,
+                          receivedPlayer: _receivedPlayer,
+                          receivedController: _receivedVideoController,
+                          onFullscreenChanged: (isFullscreen) {
+                            setState(() {
+                              _isVideoPlayerFullscreen = isFullscreen;
+                            });
+                          },
+                          onProgressUpdate: (currentTime, duration) {
+                            final workingServersAsync = ref.read(
+                              workingFtpServersProvider,
+                            );
+                            workingServersAsync.whenData((servers) {
+                              final server = servers
+                                  .where(
+                                    (s) =>
+                                        s.name == widget.contentItem.serverName,
+                                  )
+                                  .firstOrNull;
+                              if (server != null) {
+                                _handleProgressUpdate(
+                                  details,
+                                  server.id,
+                                  currentTime,
+                                  duration,
+                                );
+                              }
+                            });
+                          },
                         );
-                      }
-
-                      if (position != null) {
-                        resolvedInitialPosition = position;
-                      }
-                    }
-                  }
-
-                  return _VideoPlayerWidgetWrapper(
-                    key: _videoPlayerKey,
-                    videoUrl: _resolveVideoUrl(ref, videoUrl),
-                    autoPlay: true,
-                    initialPosition: resolvedInitialPosition,
-                    receivedPlayer: _receivedPlayer,
-                    receivedController: _receivedVideoController,
-                    onFullscreenChanged: (isFullscreen) {
-                      setState(() {
-                        _isVideoPlayerFullscreen = isFullscreen;
-                      });
-                    },
-                    onProgressUpdate: (currentTime, duration) {
-                      final workingServersAsync = ref.read(
-                        workingFtpServersProvider,
-                      );
-                      workingServersAsync.whenData((servers) {
-                        final server = servers
-                            .where(
-                              (s) => s.name == widget.contentItem.serverName,
-                            )
-                            .firstOrNull;
-                        if (server != null) {
-                          _handleProgressUpdate(
-                            details,
-                            server.id,
-                            currentTime,
-                            duration,
-                          );
-                        }
-                      });
-                    },
-                  );
-                },
+                      },
+                    ),
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: SafeArea(child: const SizedBox.shrink()),
+                    ),
+                  ],
+                ),
               ),
-              Positioned(
-                top: 0,
-                right: 0,
-                child: SafeArea(child: const SizedBox.shrink()),
-              ),
-            ],
+            ),
           )
         else
           Container(
@@ -1250,28 +1251,41 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           child: CustomScrollView(
             slivers: [
               SliverToBoxAdapter(
-                child: ContentDetailsSection(
-                  details: details,
-                  onWatchStatusDropdown: _buildWatchStatusDropdown,
-                  onDownloadButton: (details) => _buildDownloadButton(details),
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 150),
+                  opacity: sectionOpacity,
+                  child: ContentDetailsSection(
+                    details: details,
+                    onWatchStatusDropdown: _buildWatchStatusDropdown,
+                    onDownloadButton: (details) =>
+                        _buildDownloadButton(details),
+                    skipInitialAnimation:
+                        _activatedPipFromHere || _receivedPlayer != null,
+                  ),
                 ),
               ),
               if (details.isSeries && details.seasons != null)
                 SliverToBoxAdapter(
-                  child: SeasonsSection(
-                    details: details,
-                    tabController: _tabController!,
-                    currentVideoUrl: _currentVideoUrl,
-                    onEpisodeTap: _handleEpisodeTap,
-                    onEpisodeDownload:
-                        (season, seasonNumber, episodeNumber, episode) =>
-                            _buildEpisodeDownloadButton(
-                              details,
-                              season,
-                              seasonNumber,
-                              episodeNumber,
-                              episode,
-                            ),
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 150),
+                    opacity: sectionOpacity,
+                    child: SeasonsSection(
+                      details: details,
+                      tabController: _tabController!,
+                      currentVideoUrl: _currentVideoUrl,
+                      onEpisodeTap: _handleEpisodeTap,
+                      onEpisodeDownload:
+                          (season, seasonNumber, episodeNumber, episode) =>
+                              _buildEpisodeDownloadButton(
+                                details,
+                                season,
+                                seasonNumber,
+                                episodeNumber,
+                                episode,
+                              ),
+                      skipInitialAnimation:
+                          _activatedPipFromHere || _receivedPlayer != null,
+                    ),
                   ),
                 ),
               SliverToBoxAdapter(
@@ -1292,12 +1306,19 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                         if (server == null) {
                           return const SizedBox.shrink();
                         }
-                        return CommentsSection(
-                          ftpServerId: server.id,
-                          serverType: server.serverType,
-                          contentType: details.contentType,
-                          contentId: widget.contentItem.id,
-                          contentTitle: details.title,
+                        return AnimatedOpacity(
+                          duration: const Duration(milliseconds: 150),
+                          opacity: sectionOpacity,
+                          child: CommentsSection(
+                            ftpServerId: server.id,
+                            serverType: server.serverType,
+                            contentType: details.contentType,
+                            contentId: widget.contentItem.id,
+                            contentTitle: details.title,
+                            skipInitialAnimation:
+                                _activatedPipFromHere ||
+                                _receivedPlayer != null,
+                          ),
                         );
                       },
                       loading: () => const SizedBox.shrink(),
@@ -1705,53 +1726,5 @@ class _VideoPlayerWidgetWrapperState extends State<_VideoPlayerWidgetWrapper> {
       onFullscreenChanged: widget.onFullscreenChanged,
       onProgressUpdate: widget.onProgressUpdate,
     );
-  }
-}
-
-class _CircleProgressPainter extends CustomPainter {
-  _CircleProgressPainter({
-    required this.progress,
-    required this.strokeWidth,
-    required this.backgroundColor,
-    required this.progressColor,
-  });
-
-  final double progress;
-  final double strokeWidth;
-  final Color backgroundColor;
-  final Color progressColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = (size.width / 2) - (strokeWidth / 2);
-
-    final backgroundPaint = Paint()
-      ..color = backgroundColor
-      ..strokeWidth = strokeWidth
-      ..style = PaintingStyle.stroke;
-
-    final progressPaint = Paint()
-      ..color = progressColor
-      ..strokeWidth = strokeWidth
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    canvas.drawCircle(center, radius, backgroundPaint);
-
-    const pi = 3.14159265359;
-    final sweepAngle = progress * 2 * pi;
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      -pi / 2,
-      sweepAngle,
-      false,
-      progressPaint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_CircleProgressPainter oldDelegate) {
-    return oldDelegate.progress != progress;
   }
 }

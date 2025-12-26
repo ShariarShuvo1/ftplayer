@@ -5,11 +5,13 @@ import 'package:go_router/go_router.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/widgets/app_scaffold.dart';
 import '../../../core/widgets/right_drawer.dart';
+import '../../../core/widgets/search_overlay.dart';
 import '../../../state/downloads/download_provider.dart';
 import '../../../state/connectivity/connectivity_provider.dart';
 import '../../../state/ftp/working_ftp_servers_provider.dart';
 import '../../home/data/home_models.dart';
 import '../../content_details/presentation/content_details_screen.dart';
+import '../../search/presentation/search_result_screen.dart';
 import '../data/download_models.dart';
 import 'widgets/download_list_item.dart';
 
@@ -25,6 +27,7 @@ class DownloadsScreen extends ConsumerStatefulWidget {
 class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  bool _showSearch = false;
 
   @override
   void initState() {
@@ -38,9 +41,31 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
     super.dispose();
   }
 
+  void _toggleSearch() {
+    setState(() {
+      _showSearch = !_showSearch;
+    });
+  }
+
+  void _handleSearch(String query) {
+    if (query.isNotEmpty) {
+      setState(() {
+        _showSearch = false;
+      });
+      context.push(SearchResultScreen.path, extra: query);
+    }
+  }
+
+  void _handleSearchClose(String query) {
+    setState(() {
+      _showSearch = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isOffline = ref.watch(offlineModeProvider);
+    final workingServersAsync = ref.watch(workingFtpServersProvider);
 
     ref.listen<bool>(offlineModeProvider, (previous, next) {
       if (previous == false && next == true) {
@@ -106,6 +131,34 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
       title: 'Downloads',
       endDrawer: const RightDrawer(),
       actions: [
+        workingServersAsync.when(
+          data: (workingServers) => IconButton(
+            tooltip: isOffline ? 'Search disabled in offline mode' : 'Search',
+            onPressed: isOffline ? null : _toggleSearch,
+            icon: const Icon(Icons.search),
+            color: isOffline ? AppColors.textLow : AppColors.primary,
+          ),
+          loading: () => const SizedBox(
+            width: 48,
+            height: 48,
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                ),
+              ),
+            ),
+          ),
+          error: (_, _) => IconButton(
+            tooltip: 'Search',
+            onPressed: _toggleSearch,
+            icon: const Icon(Icons.search),
+            color: AppColors.primary,
+          ),
+        ),
         Builder(
           builder: (context) {
             return IconButton(
@@ -154,7 +207,18 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
         ),
       ),
       padding: EdgeInsets.zero,
-      body: TabBarView(controller: _tabController, children: children),
+      body: Stack(
+        children: [
+          TabBarView(controller: _tabController, children: children),
+          if (_showSearch)
+            Positioned.fill(
+              child: SearchOverlay(
+                onClose: _handleSearchClose,
+                onSearch: _handleSearch,
+              ),
+            ),
+        ],
+      ),
     );
   }
 

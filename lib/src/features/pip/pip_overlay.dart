@@ -32,11 +32,7 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
   static const double _maxWidth = 400.0;
   static const double _maxHeight = 225.0;
   bool _isAlignedLeft = true;
-  bool _isAnimatingToFullscreen = false;
   AnimationController? _transitionController;
-  Animation<Offset>? _positionAnimation;
-  Animation<double>? _widthAnimation;
-  Animation<double>? _heightAnimation;
 
   @override
   void initState() {
@@ -90,10 +86,6 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
         return;
       }
 
-      await _animateToFullscreen();
-
-      if (!mounted) return;
-
       final router = ref.read(goRouterProvider);
       router.push(ContentDetailsScreen.path, extra: contentItem);
     } catch (e) {
@@ -101,61 +93,6 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
         ref.read(pipProvider.notifier).deactivatePip(disposePlayer: false);
       }
     }
-  }
-
-  Future<void> _animateToFullscreen() async {
-    if (_isAnimatingToFullscreen) return;
-
-    setState(() {
-      _isAnimatingToFullscreen = true;
-      _showControls = false;
-    });
-
-    final size = MediaQuery.of(context).size;
-    final targetWidth = size.width;
-    final targetHeight = 250.0;
-    final targetPosition = Offset(0, 0);
-
-    _transitionController = AnimationController(
-      duration: const Duration(milliseconds: 200),
-      vsync: this,
-    );
-
-    _positionAnimation = Tween<Offset>(begin: _position, end: targetPosition)
-        .animate(
-          CurvedAnimation(
-            parent: _transitionController!,
-            curve: Curves.easeInOutCubic,
-          ),
-        );
-
-    _widthAnimation = Tween<double>(begin: _width, end: targetWidth).animate(
-      CurvedAnimation(
-        parent: _transitionController!,
-        curve: Curves.easeInOutCubic,
-      ),
-    );
-
-    _heightAnimation = Tween<double>(begin: _height, end: targetHeight).animate(
-      CurvedAnimation(
-        parent: _transitionController!,
-        curve: Curves.easeInOutCubic,
-      ),
-    );
-
-    _transitionController!.addListener(() {
-      if (mounted) {
-        setState(() {
-          _position = _positionAnimation!.value;
-          _width = _widthAnimation!.value;
-          _height = _heightAnimation!.value;
-        });
-      }
-    });
-
-    await _transitionController!.forward();
-
-    await Future.delayed(const Duration(milliseconds: 100));
   }
 
   @override
@@ -420,7 +357,7 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
           color: backgroundColor ?? Colors.black.withValues(alpha: 0.5),
           shape: BoxShape.circle,
         ),
-        child: Icon(icon, color: Colors.white, size: size),
+        child: Icon(icon, color: AppColors.primary, size: size),
       ),
     );
   }

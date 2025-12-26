@@ -29,6 +29,9 @@ dependencies:
     # Downloads
     flutter_downloader: ^1.11.7
 
+    # Notifications
+    flutter_local_notifications: ^18.0.0
+
     # Connectivity / device
     connectivity_plus: ^7.0.0
     device_info_plus: ^12.3.0

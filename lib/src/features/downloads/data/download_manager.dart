@@ -3,8 +3,10 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../../core/services/notification_service.dart';
 import 'download_models.dart';
 import 'download_adapters.dart';
 
@@ -16,6 +18,8 @@ class DownloadManager {
   static const _tasksBoxName = 'download_tasks';
   static const _downloadsBoxName = 'downloaded_content';
 
+  final _logger = Logger();
+
   Box<DownloadTask>? _tasksBox;
   Box<DownloadedContent>? _downloadsBox;
 
@@ -26,6 +30,8 @@ class DownloadManager {
   final _downloadsController =
       StreamController<List<DownloadedContent>>.broadcast();
   final _activeDownloadController = StreamController<DownloadTask?>.broadcast();
+
+  late NotificationService _notificationService;
 
   Stream<List<DownloadTask>> get tasksStream {
     return _tasksController.stream.asBroadcastStream();
@@ -44,6 +50,7 @@ class DownloadManager {
   Timer? _speedTimer;
   int _lastDownloadedBytes = 0;
   DateTime? _lastSpeedCheck;
+  String? _pausedOrCancelledTaskId;
 
   Future<void> initialize() async {
     if (_isInitialized) return;
@@ -61,6 +68,9 @@ class DownloadManager {
     _tasksBox = await Hive.openBox<DownloadTask>(_tasksBoxName);
     _downloadsBox = await Hive.openBox<DownloadedContent>(_downloadsBoxName);
 
+    _notificationService = NotificationService();
+    await _notificationService.initialize();
+
     _dio = Dio(
       BaseOptions(
         connectTimeout: const Duration(seconds: 30),
@@ -71,7 +81,6 @@ class DownloadManager {
 
     _isInitialized = true;
 
-    // Restore interrupted downloads: change any "downloading" status to "queued"
     final allTasks = _tasksBox?.values.toList() ?? [];
     for (final task in allTasks) {
       if (task.status == DownloadStatus.downloading) {
@@ -79,6 +88,8 @@ class DownloadManager {
         await _tasksBox?.put(task.id, restoredTask);
       }
     }
+
+    await _cleanupOrphanFiles();
 
     _notifyTasksUpdate();
     _notifyDownloadsUpdate();
@@ -256,6 +267,9 @@ class DownloadManager {
     final task = _tasksBox?.get(taskId);
     if (task == null) return;
 
+    _pausedOrCancelledTaskId = taskId;
+    await _notificationService.cancelDownloadNotification();
+
     if (task.status == DownloadStatus.downloading) {
       _currentCancelToken?.cancel('paused');
       _speedTimer?.cancel();
@@ -283,6 +297,7 @@ class DownloadManager {
     final task = _tasksBox?.get(taskId);
     if (task == null) return;
 
+    _pausedOrCancelledTaskId = null;
     final updatedTask = task.copyWith(status: DownloadStatus.queued);
     await _tasksBox?.put(taskId, updatedTask);
     _notifyTasksUpdate();
@@ -292,6 +307,9 @@ class DownloadManager {
   Future<void> cancelDownload(String taskId) async {
     final task = _tasksBox?.get(taskId);
     if (task == null) return;
+
+    _pausedOrCancelledTaskId = taskId;
+    await _notificationService.cancelDownloadNotification();
 
     if (task.status == DownloadStatus.downloading) {
       _currentCancelToken?.cancel('cancelled');
@@ -364,6 +382,7 @@ class DownloadManager {
   }
 
   Future<void> _startDownload(DownloadTask task) async {
+    _pausedOrCancelledTaskId = null;
     _currentCancelToken = CancelToken();
     _lastDownloadedBytes = task.downloadedBytes;
     _lastSpeedCheck = DateTime.now();
@@ -371,8 +390,9 @@ class DownloadManager {
     await _tasksBox?.put(task.id, updatedTask);
     _notifyTasksUpdate();
     _activeDownloadController.add(updatedTask);
+    _notificationService.showDownloadNotification(updatedTask);
 
-    _speedTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+    _speedTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) {
       _updateSpeed(task.id);
     });
 
@@ -418,9 +438,20 @@ class DownloadManager {
         cancelToken: _currentCancelToken,
       );
 
-      final totalBytes =
+      final contentLength =
           int.tryParse(response.headers.value('content-length') ?? '0') ?? 0;
-      final actualTotal = downloadedBytes + totalBytes;
+      final actualTotal = downloadedBytes > 0
+          ? (response.headers.value('content-range') != null
+                ? int.tryParse(
+                        response.headers
+                                .value('content-range')
+                                ?.split('/')
+                                .last ??
+                            '0',
+                      ) ??
+                      (downloadedBytes + contentLength)
+                : (downloadedBytes + contentLength))
+          : contentLength;
 
       final taskWithSize = task.copyWith(
         status: DownloadStatus.downloading,
@@ -435,6 +466,9 @@ class DownloadManager {
         mode: downloadedBytes > 0 ? FileMode.append : FileMode.write,
       );
 
+      var lastUpdateTime = DateTime.now();
+      const updateIntervalMs = 1000;
+
       await for (final chunk in response.data!.stream) {
         if (_currentCancelToken?.isCancelled ?? false) {
           await sink.close();
@@ -444,22 +478,39 @@ class DownloadManager {
         sink.add(chunk);
         downloadedBytes += chunk.length;
 
-        final progress = actualTotal > 0 ? downloadedBytes / actualTotal : 0.0;
+        final now = DateTime.now();
+        final timeSinceLastUpdate = now
+            .difference(lastUpdateTime)
+            .inMilliseconds;
 
-        final currentTask = _tasksBox?.get(task.id);
-        final progressTask = taskWithSize.copyWith(
-          progress: progress,
-          downloadedBytes: downloadedBytes,
-          speed: currentTask?.speed ?? taskWithSize.speed,
-          eta: currentTask?.eta ?? taskWithSize.eta,
-        );
-        await _tasksBox?.put(task.id, progressTask);
-        _notifyTasksUpdate();
-        _activeDownloadController.add(progressTask);
+        if (timeSinceLastUpdate >= updateIntervalMs) {
+          final progress = actualTotal > 0
+              ? (downloadedBytes / actualTotal).clamp(0.0, 1.0)
+              : 0.0;
+
+          final currentTask = _tasksBox?.get(task.id);
+          final progressTask = taskWithSize.copyWith(
+            progress: progress,
+            downloadedBytes: downloadedBytes,
+            totalBytes: actualTotal,
+            speed: currentTask?.speed ?? taskWithSize.speed,
+            eta: currentTask?.eta ?? taskWithSize.eta,
+          );
+          await _tasksBox?.put(task.id, progressTask);
+          _notifyTasksUpdate();
+          _activeDownloadController.add(progressTask);
+          if (progressTask.status == DownloadStatus.downloading &&
+              _pausedOrCancelledTaskId != task.id) {
+            await NotificationService().showDownloadNotification(progressTask);
+          }
+          lastUpdateTime = now;
+        }
       }
 
       await sink.close();
       _speedTimer?.cancel();
+
+      await Future.delayed(const Duration(milliseconds: 100));
 
       final finalSize = await file.length();
       final downloadedContent = task.toDownloadedContent(
@@ -473,10 +524,12 @@ class DownloadManager {
       _notifyTasksUpdate();
       _notifyDownloadsUpdate();
       _activeDownloadController.add(null);
+      await _notificationService.cancelDownloadNotification();
     } on DioException catch (e) {
       _speedTimer?.cancel();
 
       if (e.type == DioExceptionType.cancel) {
+        await _notificationService.cancelDownloadNotification();
         return;
       }
 
@@ -487,6 +540,7 @@ class DownloadManager {
       await _tasksBox?.put(task.id, failedTask);
       _notifyTasksUpdate();
       _activeDownloadController.add(null);
+      await _notificationService.cancelDownloadNotification();
     } catch (e) {
       _speedTimer?.cancel();
 
@@ -497,6 +551,7 @@ class DownloadManager {
       await _tasksBox?.put(task.id, failedTask);
       _notifyTasksUpdate();
       _activeDownloadController.add(null);
+      await _notificationService.cancelDownloadNotification();
     } finally {
       _isProcessing = false;
       _processQueue();
@@ -532,20 +587,27 @@ class DownloadManager {
     return null;
   }
 
-  void _updateSpeed(String taskId) {
+  Future<void> _updateSpeed(String taskId) async {
     final task = _tasksBox?.get(taskId);
-    if (task == null) return;
+    if (task == null || task.status != DownloadStatus.downloading) {
+      await _notificationService.cancelDownloadNotification();
+      return;
+    }
 
     final now = DateTime.now();
     final elapsed = now.difference(_lastSpeedCheck ?? now).inMilliseconds;
     if (elapsed <= 0) return;
 
-    final bytesDownloaded = task.downloadedBytes - _lastDownloadedBytes;
-    final speed = (bytesDownloaded / elapsed) * 1000;
+    final currentDownloadedBytes = task.downloadedBytes;
+    final bytesDownloadedInInterval =
+        currentDownloadedBytes - _lastDownloadedBytes;
+    final speed = elapsed > 0
+        ? ((bytesDownloadedInInterval / elapsed) * 1000).toDouble()
+        : 0.0;
 
     int? eta;
-    if (speed > 0 && task.totalBytes > 0) {
-      final remaining = task.totalBytes - task.downloadedBytes;
+    if (speed > 0 && task.totalBytes > task.downloadedBytes) {
+      final remaining = task.totalBytes - currentDownloadedBytes;
       eta = (remaining / speed).round();
     }
 
@@ -553,8 +615,11 @@ class DownloadManager {
     _tasksBox?.put(taskId, updatedTask);
     _notifyTasksUpdate();
     _activeDownloadController.add(updatedTask);
+    if (_pausedOrCancelledTaskId != taskId) {
+      await _notificationService.showDownloadNotification(updatedTask);
+    }
 
-    _lastDownloadedBytes = task.downloadedBytes;
+    _lastDownloadedBytes = currentDownloadedBytes;
     _lastSpeedCheck = now;
   }
 
@@ -588,5 +653,145 @@ class DownloadManager {
 
   void _notifyDownloadsUpdate() {
     _downloadsController.add(downloads);
+  }
+
+  Future<void> _cleanupOrphanFiles() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final downloadDir = Directory('${dir.path}/downloads');
+      final posterDir = Directory('${dir.path}/posters');
+
+      if (await downloadDir.exists()) {
+        await _cleanupOrphanInDirectory(
+          downloadDir,
+          _downloadsBox?.values.toList() ?? [],
+          isVideos: true,
+        );
+      }
+
+      if (await posterDir.exists()) {
+        await _cleanupOrphanInDirectory(
+          posterDir,
+          _downloadsBox?.values.toList() ?? [],
+          isVideos: false,
+        );
+      }
+
+      await _cleanupFailedDownloadTasks();
+    } catch (e) {
+      _logger.e('Error during orphan cleanup: $e');
+    }
+  }
+
+  Future<void> _cleanupOrphanInDirectory(
+    Directory directory,
+    List<DownloadedContent> validDownloads, {
+    required bool isVideos,
+  }) async {
+    try {
+      final files = directory.listSync().whereType<File>().toList();
+
+      for (final file in files) {
+        final fileName = file.path.split(Platform.pathSeparator).last;
+
+        bool isOrphan = true;
+        if (isVideos) {
+          isOrphan = !validDownloads.any(
+            (d) => d.localPath.split(Platform.pathSeparator).last == fileName,
+          );
+        } else {
+          isOrphan = !validDownloads.any(
+            (d) =>
+                d.localPosterPath?.split(Platform.pathSeparator).last ==
+                fileName,
+          );
+        }
+
+        if (isOrphan) {
+          try {
+            await file.delete();
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      _logger.e('Error cleaning up directory: $e');
+    }
+  }
+
+  Future<void> _cleanupFailedDownloadTasks() async {
+    try {
+      final allTasks = _tasksBox?.values.toList() ?? [];
+
+      for (final task in allTasks) {
+        if (task.status == DownloadStatus.failed ||
+            task.status == DownloadStatus.cancelled) {
+          if (task.localPath != null) {
+            try {
+              final file = File(task.localPath!);
+              if (await file.exists()) {
+                await file.delete();
+              }
+            } catch (_) {}
+          }
+
+          await _tasksBox?.delete(task.id);
+        }
+      }
+
+      _notifyTasksUpdate();
+    } catch (e) {
+      _logger.e('Error cleaning up failed tasks: $e');
+    }
+  }
+
+  Future<int> getStorageUsage() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final downloadDir = Directory('${dir.path}/downloads');
+      final posterDir = Directory('${dir.path}/posters');
+
+      int totalBytes = 0;
+
+      if (await downloadDir.exists()) {
+        totalBytes += await _getDirectorySize(downloadDir);
+      }
+
+      if (await posterDir.exists()) {
+        totalBytes += await _getDirectorySize(posterDir);
+      }
+
+      return totalBytes;
+    } catch (e) {
+      _logger.e('Error calculating storage usage: $e');
+      return 0;
+    }
+  }
+
+  Future<int> _getDirectorySize(Directory directory) async {
+    int totalSize = 0;
+    try {
+      final files = directory.listSync(recursive: true).whereType<File>();
+      for (final file in files) {
+        try {
+          totalSize += await file.length();
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return totalSize;
+  }
+
+  Future<void> clearAllCaches() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final posterDir = Directory('${dir.path}/posters');
+
+      if (await posterDir.exists()) {
+        try {
+          await posterDir.delete(recursive: true);
+        } catch (_) {}
+      }
+    } catch (e) {
+      _logger.e('Error clearing caches: $e');
+    }
   }
 }

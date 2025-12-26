@@ -9,6 +9,7 @@ class SeasonsSection extends StatefulWidget {
     required this.currentVideoUrl,
     required this.onEpisodeTap,
     this.onEpisodeDownload,
+    this.skipInitialAnimation = false,
     super.key,
   });
 
@@ -29,6 +30,7 @@ class SeasonsSection extends StatefulWidget {
     Episode episode,
   )?
   onEpisodeDownload;
+  final bool skipInitialAnimation;
 
   @override
   State<SeasonsSection> createState() => _SeasonsSectionState();
@@ -47,7 +49,11 @@ class _SeasonsSectionState extends State<SeasonsSection>
       vsync: this,
     );
     if (_isExpanded) {
-      _animationController.forward();
+      if (widget.skipInitialAnimation) {
+        _animationController.forward(from: 1.0);
+      } else {
+        _animationController.forward();
+      }
     }
   }
 

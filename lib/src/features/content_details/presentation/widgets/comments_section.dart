@@ -14,6 +14,7 @@ class CommentsSection extends ConsumerStatefulWidget {
     required this.contentType,
     required this.contentId,
     required this.contentTitle,
+    this.skipInitialAnimation = false,
     super.key,
   });
 
@@ -22,6 +23,7 @@ class CommentsSection extends ConsumerStatefulWidget {
   final String contentType;
   final String contentId;
   final String contentTitle;
+  final bool skipInitialAnimation;
 
   @override
   ConsumerState<CommentsSection> createState() => _CommentsSectionState();
@@ -44,7 +46,11 @@ class _CommentsSectionState extends ConsumerState<CommentsSection>
       vsync: this,
     );
     if (_isExpanded) {
-      _animationController.forward();
+      if (widget.skipInitialAnimation) {
+        _animationController.forward(from: 1.0);
+      } else {
+        _animationController.forward();
+      }
     }
   }
 
@@ -416,7 +422,7 @@ class _CommentsSectionState extends ConsumerState<CommentsSection>
                   ),
                   icon: const Icon(
                     Icons.more_vert,
-                    color: AppColors.textMid,
+                    color: AppColors.primary,
                     size: 18,
                   ),
                   elevation: 8,

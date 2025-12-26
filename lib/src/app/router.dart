@@ -93,9 +93,20 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: ContentDetailsScreen.path,
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final contentItem = state.extra as ContentItem;
-          return ContentDetailsScreen(contentItem: contentItem);
+          return CustomTransitionPage(
+            key: state.pageKey,
+            opaque: false,
+            barrierColor: Colors.transparent,
+            transitionDuration: const Duration(milliseconds: 180),
+            reverseTransitionDuration: const Duration(milliseconds: 180),
+            transitionsBuilder:
+                (context, animation, secondaryAnimation, child) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+            child: ContentDetailsScreen(contentItem: contentItem),
+          );
         },
       ),
       GoRoute(

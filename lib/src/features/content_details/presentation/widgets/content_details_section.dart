@@ -7,12 +7,14 @@ class ContentDetailsSection extends StatefulWidget {
     required this.details,
     required this.onWatchStatusDropdown,
     this.onDownloadButton,
+    this.skipInitialAnimation = false,
     super.key,
   });
 
   final ContentDetails details;
   final Widget Function(ContentDetails) onWatchStatusDropdown;
   final Widget Function(ContentDetails)? onDownloadButton;
+  final bool skipInitialAnimation;
 
   @override
   State<ContentDetailsSection> createState() => _ContentDetailsSectionState();
@@ -31,7 +33,11 @@ class _ContentDetailsSectionState extends State<ContentDetailsSection>
       vsync: this,
     );
     if (_isExpanded) {
-      _animationController.forward();
+      if (widget.skipInitialAnimation) {
+        _animationController.forward(from: 1.0);
+      } else {
+        _animationController.forward();
+      }
     }
   }
 

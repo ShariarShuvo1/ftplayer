@@ -195,8 +195,19 @@ class DownloadNotifier extends Notifier<void> {
     final manager = ref.read(downloadManagerProvider);
     await manager.retryDownload(taskId);
   }
+
+  Future<void> clearAllCaches() async {
+    final manager = ref.read(downloadManagerProvider);
+    await manager.clearAllCaches();
+  }
 }
 
 final downloadNotifierProvider = NotifierProvider<DownloadNotifier, void>(
   DownloadNotifier.new,
 );
+
+final storageUsageProvider = FutureProvider<int>((ref) async {
+  final manager = ref.watch(downloadManagerProvider);
+  await manager.initialize();
+  return manager.getStorageUsage();
+});

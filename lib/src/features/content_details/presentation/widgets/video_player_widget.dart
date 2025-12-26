@@ -820,8 +820,8 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                   ),
                 if (_showControls && !_isBuffering)
                   Positioned(
-                    top: 32,
-                    right: 12,
+                    top: 8,
+                    right: 8,
                     child: IconButton(
                       icon: const Icon(
                         Icons.more_vert,
@@ -957,7 +957,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                                 _isFullscreen
                                     ? Icons.fullscreen_exit
                                     : Icons.fullscreen,
-                                color: Colors.white,
+                                color: AppColors.primary,
                                 size: 22,
                               ),
                               padding: const EdgeInsets.all(8),
