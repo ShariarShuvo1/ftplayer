@@ -22,34 +22,71 @@ class NotificationService {
       '@drawable/ic_launcher',
     );
     const iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestBadgePermission: false,
+      requestAlertPermission: true,
+      requestBadgePermission: true,
       requestSoundPermission: false,
     );
 
-    await _notificationsPlugin.initialize(
-      InitializationSettings(android: androidSettings, iOS: iosSettings),
-    );
+    try {
+      await _notificationsPlugin.initialize(
+        InitializationSettings(android: androidSettings, iOS: iosSettings),
+      );
 
-    _isInitialized = true;
+      await _requestPermissions();
+
+      _isInitialized = true;
+    } catch (e) {
+      debugPrint('Failed to initialize notifications: $e');
+    }
+  }
+
+  Future<void> _requestPermissions() async {
+    final androidImplementation = _notificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+
+    if (androidImplementation != null) {
+      final granted = await androidImplementation
+          .requestNotificationsPermission();
+      debugPrint('Android notification permission granted: $granted');
+    }
+
+    final iosImplementation = _notificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin
+        >();
+
+    if (iosImplementation != null) {
+      final granted = await iosImplementation.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: false,
+      );
+      debugPrint('iOS notification permission granted: $granted');
+    }
   }
 
   Future<void> createDownloadNotificationChannel() async {
-    const androidChannel = AndroidNotificationChannel(
-      'download_channel',
-      'Downloads',
-      description: 'Notifications for active downloads',
-      importance: Importance.high,
-      enableVibration: false,
-      playSound: false,
-      ledColor: Color(0xFFFF8A00),
-    );
+    try {
+      const androidChannel = AndroidNotificationChannel(
+        'download_channel',
+        'Downloads',
+        description: 'Notifications for active downloads',
+        importance: Importance.high,
+        enableVibration: false,
+        playSound: false,
+        ledColor: Color(0xFFFF8A00),
+      );
 
-    await _notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(androidChannel);
+      await _notificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.createNotificationChannel(androidChannel);
+    } catch (e) {
+      debugPrint('Failed to create notification channel: $e');
+    }
   }
 
   Future<void> showDownloadNotification(DownloadTask task) async {
@@ -58,58 +95,67 @@ class NotificationService {
       return;
     }
 
-    await initialize();
-    await createDownloadNotificationChannel();
+    try {
+      await initialize();
+      if (!_isInitialized) {
+        debugPrint('Notification service not initialized');
+        return;
+      }
 
-    final progress = (task.progress * 100).toInt();
+      await createDownloadNotificationChannel();
 
-    final androidDetails = AndroidNotificationDetails(
-      'download_channel',
-      'Downloads',
-      channelDescription: 'Notifications for active downloads',
-      importance: Importance.high,
-      priority: Priority.high,
-      onlyAlertOnce: true,
-      showProgress: true,
-      maxProgress: 100,
-      progress: progress,
-      indeterminate: false,
-      enableVibration: false,
-      playSound: false,
-      ongoing: task.status == DownloadStatus.downloading,
-      autoCancel: false,
-      color: const Color(0xFFFF8A00),
-      colorized: true,
-      icon: '@drawable/ic_launcher',
-      styleInformation: BigTextStyleInformation(
-        _buildNotificationBody(task),
-        contentTitle: task.displayTitle,
-        htmlFormatBigText: false,
-        htmlFormatTitle: false,
-        summaryText: _buildSummaryText(task),
-      ),
-      // tag: 'download_${task.id}',
-      visibility: NotificationVisibility.public,
-    );
+      final progress = (task.progress * 100).toInt();
 
-    const iosPlatformChannelSpecifics = DarwinNotificationDetails(
-      presentAlert: false,
-      presentBadge: false,
-      presentSound: false,
-    );
+      final androidDetails = AndroidNotificationDetails(
+        'download_channel',
+        'Downloads',
+        channelDescription: 'Notifications for active downloads',
+        importance: Importance.high,
+        priority: Priority.high,
+        onlyAlertOnce: true,
+        showProgress: true,
+        maxProgress: 100,
+        progress: progress,
+        indeterminate: false,
+        enableVibration: false,
+        playSound: false,
+        ongoing: task.status == DownloadStatus.downloading,
+        autoCancel: false,
+        color: const Color(0xFFFF8A00),
+        colorized: true,
+        icon: '@mipmap/ic_launcher',
+        styleInformation: BigTextStyleInformation(
+          _buildNotificationBody(task),
+          contentTitle: task.displayTitle,
+          htmlFormatBigText: false,
+          htmlFormatTitle: false,
+          summaryText: _buildSummaryText(task),
+        ),
+        // tag: 'download_${task.id}',
+        visibility: NotificationVisibility.public,
+      );
 
-    final platformChannelSpecifics = NotificationDetails(
-      android: androidDetails,
-      iOS: iosPlatformChannelSpecifics,
-    );
+      const iosPlatformChannelSpecifics = DarwinNotificationDetails(
+        presentAlert: false,
+        presentBadge: false,
+        presentSound: false,
+      );
 
-    await _notificationsPlugin.show(
-      1,
-      task.displayTitle,
-      _buildSummaryText(task),
-      platformChannelSpecifics,
-      payload: 'download_${task.id}',
-    );
+      final platformChannelSpecifics = NotificationDetails(
+        android: androidDetails,
+        iOS: iosPlatformChannelSpecifics,
+      );
+
+      await _notificationsPlugin.show(
+        1,
+        task.displayTitle,
+        _buildSummaryText(task),
+        platformChannelSpecifics,
+        payload: 'download_${task.id}',
+      );
+    } catch (e) {
+      debugPrint('Failed to show download notification: $e');
+    }
   }
 
   String _buildSummaryText(DownloadTask task) {
