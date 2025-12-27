@@ -1,10 +1,9 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shimmer_animation/shimmer_animation.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../app/theme/app_colors.dart';
+import 'universal_poster_image.dart';
 import '../../../content_details/presentation/content_details_screen.dart';
 import '../../data/home_models.dart';
 
@@ -21,6 +20,15 @@ class FeaturedCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    bool isLocalFile(String url) {
+      if (url.isEmpty) return false;
+      final uri = Uri.tryParse(url);
+      if (uri != null && uri.hasScheme) {
+        return uri.scheme == 'file';
+      }
+      return !(url.startsWith('http://') || url.startsWith('https://'));
+    }
+
     return GestureDetector(
       onTap: () => _navigate(context),
       child: Container(
@@ -33,31 +41,12 @@ class FeaturedCard extends ConsumerWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                content.posterUrl.isNotEmpty
-                    ? CachedNetworkImage(
-                        imageUrl: content.posterUrl,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => Shimmer(
-                          color: AppColors.primary.withValues(alpha: 0.3),
-                          child: Container(color: AppColors.surface),
-                        ),
-                        errorWidget: (context, url, error) => Container(
-                          color: AppColors.surface,
-                          child: const Icon(
-                            Icons.movie,
-                            color: AppColors.textLow,
-                            size: 60,
-                          ),
-                        ),
-                      )
-                    : Container(
-                        color: AppColors.surface,
-                        child: const Icon(
-                          Icons.movie,
-                          color: AppColors.textLow,
-                          size: 60,
-                        ),
-                      ),
+                UniversalPosterImage(
+                  imageUrl: content.posterUrl,
+                  isLocalFile: isLocalFile(content.posterUrl),
+                  placeholderIcon: Icons.movie,
+                  borderRadius: 12,
+                ),
                 Positioned(
                   top: 12,
                   right: 12,

@@ -230,13 +230,117 @@ class ContentDetails {
       videoUrl: videoUrl,
     );
   }
+
+  factory ContentDetails.fromAmaderFtp(
+    Map<String, dynamic> json,
+    String baseUrl,
+    String serverName,
+    String? accessToken,
+  ) {
+    final itemId = (json['Id'] ?? '').toString();
+    final imageTags = json['ImageTags'] as Map<String, dynamic>?;
+    final primaryTag = imageTags?['Primary']?.toString() ?? '';
+    final backdropTags = json['BackdropImageTags'] as List?;
+    final backdropTag = (backdropTags != null && backdropTags.isNotEmpty)
+        ? backdropTags[0].toString()
+        : '';
+
+    String posterUrl = '';
+    if (itemId.isNotEmpty) {
+      if (primaryTag.isNotEmpty) {
+        posterUrl =
+            '$baseUrl/Items/$itemId/Images/Primary?tag=$primaryTag&quality=96&fillWidth=400&fillHeight=600';
+      } else if (backdropTag.isNotEmpty) {
+        posterUrl =
+            '$baseUrl/Items/$itemId/Images/Backdrop?tag=$backdropTag&quality=96&fillWidth=400&fillHeight=600';
+      }
+    }
+
+    final type = json['Type']?.toString() ?? '';
+    final normalizedType = type == 'Series' ? 'series' : 'movie';
+
+    final rating = json['CommunityRating'];
+    double? parsedRating;
+    if (rating != null && rating is num) {
+      parsedRating = rating.toDouble();
+    }
+
+    final runTimeTicks = json['RunTimeTicks'] as int?;
+    String? watchTime;
+    if (runTimeTicks != null) {
+      final totalSeconds = runTimeTicks ~/ 10000000;
+      final hours = totalSeconds ~/ 3600;
+      final minutes = (totalSeconds % 3600) ~/ 60;
+      if (hours > 0) {
+        watchTime = '${hours}h ${minutes}m';
+      } else {
+        watchTime = '${minutes}m';
+      }
+    }
+
+    final genres = json['Genres'] as List?;
+    String? tags;
+    if (genres != null && genres.isNotEmpty) {
+      tags = genres.take(4).map((g) => g.toString()).join(', ');
+    }
+
+    String? videoUrl;
+    if (normalizedType == 'movie' && itemId.isNotEmpty) {
+      videoUrl = '$baseUrl/Videos/$itemId/stream.mp4?Static=true';
+      if (accessToken != null) {
+        videoUrl = '$videoUrl&api_key=$accessToken';
+      }
+    }
+
+    return ContentDetails(
+      id: itemId,
+      title: (json['Name'] ?? '').toString(),
+      posterUrl: posterUrl,
+      serverName: serverName,
+      serverType: 'amaderftp',
+      contentType: normalizedType,
+      year: json['ProductionYear']?.toString(),
+      quality: json['OfficialRating']?.toString(),
+      rating: parsedRating,
+      description: json['Overview']?.toString(),
+      watchTime: watchTime,
+      tags: tags,
+      videoUrl: videoUrl,
+    );
+  }
+
+  ContentDetails copyWithSeasons(List<Season> newSeasons) {
+    return ContentDetails(
+      id: id,
+      title: title,
+      posterUrl: posterUrl,
+      serverName: serverName,
+      serverType: serverType,
+      contentType: contentType,
+      year: year,
+      quality: quality,
+      rating: rating,
+      description: description,
+      watchTime: watchTime,
+      tags: tags,
+      videoUrl: videoUrl,
+      seasons: newSeasons,
+    );
+  }
 }
 
 class Season {
-  Season({required this.seasonName, required this.episodes});
+  Season({
+    required this.seasonName,
+    required this.episodes,
+    this.seasonId,
+    this.seasonNumber,
+  });
 
   final String seasonName;
   final List<Episode> episodes;
+  final String? seasonId;
+  final int? seasonNumber;
 
   factory Season.fromJson(Map<String, dynamic> json) {
     final episodes =
@@ -248,6 +352,17 @@ class Season {
     return Season(
       seasonName: json['seasonName']?.toString() ?? 'Season',
       episodes: episodes,
+      seasonId: json['seasonId']?.toString(),
+      seasonNumber: json['seasonNumber'] as int?,
+    );
+  }
+
+  factory Season.fromAmaderFtp(Map<String, dynamic> json, List<Episode> eps) {
+    return Season(
+      seasonName: json['Name']?.toString() ?? 'Season',
+      episodes: eps,
+      seasonId: json['Id']?.toString(),
+      seasonNumber: json['IndexNumber'] as int?,
     );
   }
 }
@@ -258,12 +373,18 @@ class Episode {
     required this.link,
     this.id,
     this.episodeNumber,
+    this.overview,
+    this.stillImageUrl,
+    this.runtime,
   });
 
   final String title;
   final String link;
   final String? id;
   final int? episodeNumber;
+  final String? overview;
+  final String? stillImageUrl;
+  final String? runtime;
 
   factory Episode.fromJson(Map<String, dynamic> json) {
     return Episode(
@@ -271,6 +392,47 @@ class Episode {
       link: json['link']?.toString() ?? '',
       id: json['id']?.toString() ?? json['link']?.toString(),
       episodeNumber: json['episodeNumber'] as int?,
+      overview: json['overview']?.toString(),
+      stillImageUrl: json['stillImageUrl']?.toString(),
+      runtime: json['runtime']?.toString(),
+    );
+  }
+
+  factory Episode.fromAmaderFtp(
+    Map<String, dynamic> json,
+    String baseUrl,
+    String? accessToken,
+  ) {
+    final itemId = json['Id']?.toString() ?? '';
+    final imageTags = json['ImageTags'] as Map<String, dynamic>?;
+    final primaryTag = imageTags?['Primary']?.toString() ?? '';
+
+    String? stillImageUrl;
+    if (itemId.isNotEmpty && primaryTag.isNotEmpty) {
+      stillImageUrl =
+          '$baseUrl/Items/$itemId/Images/Primary?tag=$primaryTag&quality=80&fillWidth=320&fillHeight=180';
+    }
+
+    String videoUrl = '$baseUrl/Videos/$itemId/stream.mp4?Static=true';
+    if (accessToken != null) {
+      videoUrl = '$videoUrl&api_key=$accessToken';
+    }
+
+    final runTimeTicks = json['RunTimeTicks'] as int?;
+    String? runtime;
+    if (runTimeTicks != null) {
+      final minutes = runTimeTicks ~/ 10000000 ~/ 60;
+      runtime = '${minutes}m';
+    }
+
+    return Episode(
+      title: json['Name']?.toString() ?? 'Episode',
+      link: videoUrl,
+      id: itemId,
+      episodeNumber: json['IndexNumber'] as int?,
+      overview: json['Overview']?.toString(),
+      stillImageUrl: stillImageUrl,
+      runtime: runtime,
     );
   }
 }

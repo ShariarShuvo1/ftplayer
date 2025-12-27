@@ -239,13 +239,27 @@ class _WatchHistoryScreenState extends ConsumerState<WatchHistoryScreen>
                 itemCount: expandedItems.length,
                 itemBuilder: (context, index) {
                   final item = expandedItems[index];
+                  final isSeries = (item['history'] as WatchHistory).contentType
+                      .contains('series');
+                  final episodeInfo = item['episode'] as Map<String, dynamic>?;
+
                   return WatchHistoryListItem(
                     watchHistory: item['history'] as WatchHistory,
-                    episodeInfo: item['episode'] as Map<String, dynamic>?,
-                    onDelete: () => _deleteWatchHistory(item['history'].id),
+                    episodeInfo: episodeInfo,
+                    onDelete: () {
+                      if (isSeries && episodeInfo != null) {
+                        _deleteEpisodeFromHistory(
+                          item['history'].id,
+                          episodeInfo['seasonNumber'] as int,
+                          episodeInfo['episodeNumber'] as int,
+                        );
+                      } else {
+                        _deleteWatchHistory(item['history'].id);
+                      }
+                    },
                     onTap: () => _navigateToContent(
                       item['history'] as WatchHistory,
-                      episode: item['episode'] as Map<String, dynamic>?,
+                      episode: episodeInfo,
                     ),
                   );
                 },
@@ -305,6 +319,25 @@ class _WatchHistoryScreenState extends ConsumerState<WatchHistoryScreen>
         )),
       );
     });
+  }
+
+  void _deleteEpisodeFromHistory(
+    String historyId,
+    int seasonNumber,
+    int episodeNumber,
+  ) {
+    ref
+        .read(watchHistoryNotifierProvider.notifier)
+        .deleteEpisodeFromHistory(historyId, seasonNumber, episodeNumber)
+        .then((_) {
+          ref.invalidate(
+            watchHistoryListProvider((
+              status: statuses[_tabController.index].value,
+              limit: 50,
+              page: _currentPage,
+            )),
+          );
+        });
   }
 
   void _navigateToContent(

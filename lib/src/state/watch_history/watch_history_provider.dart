@@ -161,6 +161,24 @@ class WatchHistoryNotifier extends AutoDisposeAsyncNotifier<WatchHistory?> {
       return null;
     });
   }
+
+  Future<void> deleteEpisodeFromHistory(
+    String id,
+    int seasonNumber,
+    int episodeNumber,
+  ) async {
+    state = const AsyncValue.loading();
+
+    state = await AsyncValue.guard(() async {
+      final api = ref.read(watchHistoryApiProvider);
+      final response = await api.deleteEpisodeFromWatchHistory(
+        id: id,
+        seasonNumber: seasonNumber,
+        episodeNumber: episodeNumber,
+      );
+      return response.watchHistory;
+    });
+  }
 }
 
 final watchHistoryNotifierProvider =

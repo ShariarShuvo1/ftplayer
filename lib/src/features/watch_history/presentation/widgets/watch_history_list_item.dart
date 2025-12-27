@@ -61,11 +61,33 @@ class WatchHistoryListItem extends StatelessWidget {
   }
 
   Widget _buildMovieItem(BuildContext context) {
+    final progress = watchHistory.progress;
+    final percentage = progress?.percentage ?? 0.0;
+    final currentTime = progress?.currentTime.toInt() ?? 0;
+    final duration = progress?.duration.toInt() ?? 0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: AppColors.surfaceAlt,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.movie_outlined,
+                  color: AppColors.primary,
+                  size: 28,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -80,17 +102,60 @@ class WatchHistoryListItem extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    watchHistory.serverType.toUpperCase(),
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: AppColors.textMid),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.storage_outlined,
+                        size: 12,
+                        color: AppColors.textMid,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        watchHistory.serverType.toUpperCase(),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: AppColors.textMid,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
           ],
         ),
+        if (progress != null && duration > 0) ...[
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: (percentage / 100).clamp(0.0, 1.0),
+              backgroundColor: AppColors.outline,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                percentage >= 95 ? AppColors.success : AppColors.primary,
+              ),
+              minHeight: 4,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${_formatDuration(Duration(seconds: currentTime))} / ${_formatDuration(Duration(seconds: duration))}',
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: AppColors.textLow),
+              ),
+              Text(
+                '${percentage.toStringAsFixed(0)}%',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppColors.textMid,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -101,12 +166,33 @@ class WatchHistoryListItem extends StatelessWidget {
     final seasonNumber = episodeInfo!['seasonNumber'] as int?;
     final episodeNumber = episodeInfo!['episodeNumber'] as int?;
     final episodeTitle = episodeInfo!['episodeTitle'] as String?;
+    final progress = episodeInfo!['progress'] as ProgressInfo?;
+    final percentage = progress?.percentage ?? 0.0;
+    final currentTime = progress?.currentTime.toInt() ?? 0;
+    final duration = progress?.duration.toInt() ?? 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: AppColors.surfaceAlt,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.tv_outlined,
+                  color: AppColors.primary,
+                  size: 28,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -141,6 +227,39 @@ class WatchHistoryListItem extends StatelessWidget {
             ),
           ],
         ),
+        if (progress != null && duration > 0) ...[
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: (percentage / 100).clamp(0.0, 1.0),
+              backgroundColor: AppColors.outline,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                percentage >= 95 ? AppColors.success : AppColors.primary,
+              ),
+              minHeight: 4,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${_formatDuration(Duration(seconds: currentTime))} / ${_formatDuration(Duration(seconds: duration))}',
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: AppColors.textLow),
+              ),
+              Text(
+                '${percentage.toStringAsFixed(0)}%',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppColors.textMid,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -153,11 +272,41 @@ class WatchHistoryListItem extends StatelessWidget {
       (sum, s) => sum + s.episodes.length,
     );
 
+    // Calculate overall progress for series
+    double totalCurrentTime = 0;
+    double totalDuration = 0;
+    for (final season in seriesProgress) {
+      for (final episode in season.episodes) {
+        totalCurrentTime += episode.progress.currentTime;
+        totalDuration += episode.progress.duration;
+      }
+    }
+    final overallPercentage = totalDuration > 0
+        ? (totalCurrentTime / totalDuration) * 100
+        : 0.0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: AppColors.surfaceAlt,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.theater_comedy_outlined,
+                  color: AppColors.primary,
+                  size: 28,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -172,11 +321,21 @@ class WatchHistoryListItem extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    watchHistory.serverType.toUpperCase(),
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: AppColors.textMid),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.storage_outlined,
+                        size: 12,
+                        color: AppColors.textMid,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        watchHistory.serverType.toUpperCase(),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: AppColors.textMid,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -191,8 +350,50 @@ class WatchHistoryListItem extends StatelessWidget {
               context,
             ).textTheme.labelSmall?.copyWith(color: AppColors.textLow),
           ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: (overallPercentage / 100).clamp(0.0, 1.0),
+              backgroundColor: AppColors.outline,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                overallPercentage >= 95 ? AppColors.success : AppColors.primary,
+              ),
+              minHeight: 4,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${_formatDuration(Duration(seconds: totalCurrentTime.toInt()))} / ${_formatDuration(Duration(seconds: totalDuration.toInt()))}',
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: AppColors.textLow),
+              ),
+              Text(
+                '${overallPercentage.toStringAsFixed(0)}%',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppColors.textMid,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
         ],
       ],
     );
+  }
+
+  String _formatDuration(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+
+    if (hours > 0) {
+      return '${hours}h ${minutes}m';
+    }
+    return '${minutes}m ${seconds}s';
   }
 }

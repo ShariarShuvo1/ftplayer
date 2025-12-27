@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../amaderftp/amaderftp_session_provider.dart';
 import '../../features/ftp_servers/data/ftp_server_models.dart';
 import '../../features/ftp_servers/data/ftp_server_repository.dart';
 import '../connectivity/connectivity_provider.dart';
@@ -229,6 +230,10 @@ class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
       if (response.statusCode != null &&
           response.statusCode! >= 200 &&
           response.statusCode! < 500) {
+        if (server.serverType == 'amaderftp') {
+          await _authenticateAmaderFtp();
+        }
+
         return ServerCheckResult(
           server: server,
           status: ServerAvailabilityStatus.available,
@@ -290,6 +295,13 @@ class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
 
   void reset() {
     state = FtpAvailabilityState.initial();
+  }
+
+  Future<void> _authenticateAmaderFtp() async {
+    try {
+      final sessionNotifier = ref.read(amaderFtpSessionProvider.notifier);
+      await sessionNotifier.ensureAuthenticated();
+    } catch (_) {}
   }
 
   @override

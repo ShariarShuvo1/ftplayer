@@ -10,6 +10,7 @@ import '../../../state/search/search_provider.dart';
 import '../../../state/ftp/working_ftp_servers_provider.dart';
 import '../../content_details/presentation/content_details_screen.dart';
 import '../../home/data/home_models.dart';
+import '../../home/presentation/widgets/universal_poster_image.dart';
 import '../data/search_models.dart';
 
 class SearchResultScreen extends ConsumerStatefulWidget {
@@ -41,6 +42,15 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  bool isLocalFile(String url) {
+    if (url.isEmpty) return false;
+    final uri = Uri.tryParse(url);
+    if (uri != null && uri.hasScheme) {
+      return uri.scheme == 'file';
+    }
+    return !(url.startsWith('http://') || url.startsWith('https://'));
   }
 
   void _toggleSearch() {
@@ -336,6 +346,10 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
   }
 
   Widget _buildSearchResultItem(SearchResult result, VoidCallback onTap) {
+    final placeholderIcon = result.contentType == 'series'
+        ? Icons.tv
+        : Icons.movie;
+
     return GestureDetector(
       onTap: onTap,
       child: Column(
@@ -343,53 +357,58 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Stack(
-                children: [
-                  result.posterUrl.isNotEmpty
-                      ? Image.network(
-                          result.posterUrl,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                              Container(
-                                color: AppColors.surface,
-                                child: const Icon(
-                                  Icons.movie,
-                                  color: AppColors.textLow,
-                                  size: 40,
-                                ),
-                              ),
-                        )
-                      : Container(
-                          color: AppColors.surface,
-                          child: const Icon(
-                            Icons.movie,
-                            color: AppColors.textLow,
-                            size: 40,
-                          ),
-                        ),
-                  Positioned(
-                    top: 6,
-                    right: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.black.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Icon(
-                        result.contentType == 'series' ? Icons.tv : Icons.movie,
+            child: Stack(
+              children: [
+                UniversalPosterImage(
+                  imageUrl: result.posterUrl,
+                  isLocalFile: isLocalFile(result.posterUrl),
+                  placeholderIcon: placeholderIcon,
+                  borderRadius: 8,
+                ),
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.black.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Icon(
+                      result.contentType == 'series' ? Icons.tv : Icons.movie,
+                      color: AppColors.primary,
+                      size: 16,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 6,
+                  left: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.black.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      result.serverName,
+                      style: const TextStyle(
                         color: AppColors.primary,
-                        size: 16,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
+                ),
+                if (result.quality != null && result.quality!.isNotEmpty)
                   Positioned(
-                    top: 6,
+                    bottom: 6,
                     left: 6,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -397,44 +416,20 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: AppColors.black.withValues(alpha: 0.7),
+                        color: AppColors.primary.withValues(alpha: 0.9),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
-                        result.serverName,
+                        result.quality!,
                         style: const TextStyle(
-                          color: AppColors.primary,
+                          color: AppColors.black,
                           fontSize: 9,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
                   ),
-                  if (result.quality != null && result.quality!.isNotEmpty)
-                    Positioned(
-                      bottom: 6,
-                      left: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.9),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          result.quality!,
-                          style: const TextStyle(
-                            color: AppColors.black,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
+              ],
             ),
           ),
           const SizedBox(height: 8),

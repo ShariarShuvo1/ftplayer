@@ -9,6 +9,7 @@ class SearchResult {
     this.year,
     this.quality,
     this.description,
+    this.initialData,
   });
 
   final String id;
@@ -20,6 +21,7 @@ class SearchResult {
   final String? year;
   final String? quality;
   final String? description;
+  final Map<String, dynamic>? initialData;
 
   factory SearchResult.fromCircleFtp(
     Map<String, dynamic> json,
@@ -80,6 +82,54 @@ class SearchResult {
       year: year.toString().isNotEmpty ? year.toString() : null,
       quality: quality.toString().isNotEmpty ? quality.toString() : null,
       description: json['Story']?.toString() ?? json['description']?.toString(),
+    );
+  }
+
+  factory SearchResult.fromAmaderFtp(
+    Map<String, dynamic> json,
+    String baseUrl,
+    String serverName,
+  ) {
+    final itemId = (json['Id'] ?? '').toString();
+    final imageTags = json['ImageTags'] as Map<String, dynamic>?;
+    final primaryTag = imageTags?['Primary']?.toString() ?? '';
+    final backdropTags = json['BackdropImageTags'] as List?;
+    final backdropTag = (backdropTags != null && backdropTags.isNotEmpty)
+        ? backdropTags[0].toString()
+        : '';
+
+    String posterUrl = '';
+    if (itemId.isNotEmpty) {
+      if (primaryTag.isNotEmpty) {
+        posterUrl =
+            '$baseUrl/Items/$itemId/Images/Primary?tag=$primaryTag&quality=96&fillWidth=207&fillHeight=310';
+      } else if (backdropTag.isNotEmpty) {
+        posterUrl =
+            '$baseUrl/Items/$itemId/Images/Backdrop?tag=$backdropTag&quality=96&fillWidth=207&fillHeight=310';
+      }
+    }
+
+    final type = json['Type']?.toString() ?? '';
+    final normalizedType = type == 'Series' ? 'series' : 'movie';
+
+    final runTimeTicks = json['RunTimeTicks'] as int?;
+    String? runtime;
+    if (runTimeTicks != null) {
+      final minutes = runTimeTicks ~/ 10000000 ~/ 60;
+      runtime = '${minutes}min';
+    }
+
+    return SearchResult(
+      id: itemId,
+      title: (json['Name'] ?? '').toString(),
+      posterUrl: posterUrl,
+      serverName: serverName,
+      serverType: 'amaderftp',
+      contentType: normalizedType,
+      year: json['ProductionYear']?.toString(),
+      quality: runtime,
+      description: json['Overview']?.toString(),
+      initialData: json,
     );
   }
 

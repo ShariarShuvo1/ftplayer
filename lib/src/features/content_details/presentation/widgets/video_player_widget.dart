@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:logger/logger.dart';
 
 import '../../../../app/theme/app_colors.dart';
 
@@ -97,6 +98,7 @@ class _VideoSurfaceState extends State<_VideoSurface>
 }
 
 class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
+  final Logger _logger = Logger();
   late Player _player;
   late VideoController _videoController;
   bool _isInitialized = false;
@@ -129,6 +131,9 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   final double _normalPlaybackSpeed = 1.0;
   int? _selectedSubtitleIndex;
   int? _selectedAudioIndex;
+  bool _hasAppliedInitialSeek = false;
+  bool _isPlayerReady = false;
+  Timer? _initializationCheckTimer;
 
   Player? get player => _player;
   VideoController? get videoController => _videoController;
@@ -138,6 +143,8 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   @override
   void initState() {
     super.initState();
+    _hasAppliedInitialSeek = false;
+    _isPlayerReady = false;
     if (widget._isFromExisting &&
         widget.player != null &&
         widget.videoController != null) {
@@ -152,11 +159,25 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   @override
   void didUpdateWidget(VideoPlayerWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget._isFromExisting &&
+
+    final urlChanged =
+        !widget._isFromExisting &&
         oldWidget.videoUrl != widget.videoUrl &&
         widget.videoUrl.isNotEmpty &&
-        _isInitialized) {
+        _isInitialized;
+    final positionChanged = oldWidget.initialPosition != widget.initialPosition;
+
+    if (urlChanged) {
+      _hasAppliedInitialSeek = false;
+      _isPlayerReady = false;
       _reloadVideo();
+    }
+
+    if (positionChanged) {
+      _hasAppliedInitialSeek = false;
+      if (!urlChanged) {
+        _waitForPlayerReadyAndSeek();
+      }
     }
   }
 
@@ -184,10 +205,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
         _hasError = false;
       });
 
-      if (widget.initialPosition != null &&
-          widget.initialPosition!.inSeconds > 0) {
-        await _player.seek(widget.initialPosition!);
-      }
+      _waitForPlayerReadyAndSeek();
 
       if (widget.autoPlay) {
         await _player.play();
@@ -293,6 +311,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
       _player.stream.error.listen((error) {
         if (mounted && !_isDisposing) {
+          _logger.e('Player error: $error');
           setState(() {
             _hasError = true;
             _errorMessage = error;
@@ -321,6 +340,10 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
       _player.stream.duration.listen((duration) {
         if (mounted && !_isDisposing) {
+          if (duration > Duration.zero && !_isPlayerReady) {
+            _isPlayerReady = true;
+            _waitForPlayerReadyAndSeek();
+          }
           setState(() {
             _duration = duration;
           });
@@ -357,10 +380,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
           _isInitialized = true;
         });
 
-        if (widget.initialPosition != null &&
-            widget.initialPosition!.inSeconds > 0) {
-          await _player.seek(widget.initialPosition!);
-        }
+        _waitForPlayerReadyAndSeek();
 
         if (widget.autoPlay) {
           await _player.play();
@@ -368,6 +388,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
         }
       }
     } catch (e) {
+      _logger.e('Error initializing player: $e');
       if (mounted) {
         setState(() {
           _hasError = true;
@@ -377,8 +398,52 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     }
   }
 
+  void _waitForPlayerReadyAndSeek() {
+    if (_hasAppliedInitialSeek) {
+      return;
+    }
+
+    if (widget.initialPosition == null ||
+        widget.initialPosition!.inSeconds <= 0) {
+      return;
+    }
+
+    if (!_isPlayerReady || _duration <= Duration.zero) {
+      _initializationCheckTimer?.cancel();
+      _initializationCheckTimer = Timer(const Duration(milliseconds: 500), () {
+        _waitForPlayerReadyAndSeek();
+      });
+      return;
+    }
+
+    _initializationCheckTimer?.cancel();
+    _applyInitialSeek();
+  }
+
+  Future<void> _applyInitialSeek() async {
+    if (_hasAppliedInitialSeek) {
+      return;
+    }
+    if (widget.initialPosition == null ||
+        widget.initialPosition!.inSeconds <= 0) {
+      return;
+    }
+
+    try {
+      _hasAppliedInitialSeek = true;
+      final seekPosition = widget.initialPosition!;
+      await _player.seek(seekPosition);
+      _positionNotifier.value = seekPosition;
+      _lastPosition = seekPosition;
+    } catch (e) {
+      _logger.e('Error applying initial seek: $e');
+      _hasAppliedInitialSeek = false;
+    }
+  }
+
   @override
   void dispose() {
+    _initializationCheckTimer?.cancel();
     _cancelControlsTimer();
     _cancelProgressTimer();
     _cancelIndicatorTimers();

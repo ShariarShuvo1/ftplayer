@@ -88,6 +88,22 @@ class WatchHistoryApi {
     }
   }
 
+  Future<WatchHistoryResponse> deleteEpisodeFromWatchHistory({
+    required String id,
+    required int seasonNumber,
+    required int episodeNumber,
+  }) async {
+    try {
+      final res = await dio.delete(
+        '/watch-history/$id/episode',
+        data: {'seasonNumber': seasonNumber, 'episodeNumber': episodeNumber},
+      );
+      return WatchHistoryResponse.fromJson(res.data as Map<String, dynamic>);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
   Future<WatchHistoryListResponse> getWatchHistory({
     String? status,
     String? contentType,

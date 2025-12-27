@@ -18,6 +18,7 @@ import '../../../state/connectivity/connectivity_provider.dart';
 import '../../../state/downloads/download_provider.dart';
 import '../../home/data/home_models.dart';
 import '../data/content_details_models.dart';
+import '../../watch_history/data/watch_history_models.dart';
 import 'widgets/video_player_widget.dart';
 import 'widgets/watch_status_dropdown.dart';
 import 'widgets/content_details_section.dart';
@@ -56,6 +57,9 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   VideoController? _receivedVideoController;
   bool _isVideoPlayerFullscreen = false;
   Duration? _initialPosition;
+  bool _hasAppliedInitialPosition = false;
+  List<SeasonProgress>? _liveSeriesProgress;
+  int _progressUpdateCounter = 0;
   final GlobalKey<_VideoPlayerWidgetWrapperState> _videoPlayerKey = GlobalKey();
   AnimationController? _pipTransitionController;
   final double _pipTriggerFraction = 0.4;
@@ -67,9 +71,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
   }
 
   double _getSectionHideProgress(BuildContext context) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final hideThreshold = screenHeight * _sectionHideFraction;
-    return (_dragOffset / hideThreshold).clamp(0.0, 1.0);
+    return (_getSwipeProgress(context) / _sectionHideFraction).clamp(0.0, 1.0);
   }
 
   double _getVideoScaleProgress(BuildContext context) {
@@ -106,16 +108,8 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     }
 
     if (widget.contentItem.initialData != null) {
-      _logger.i(
-        'Loading offline content from metadata: ${widget.contentItem.title}',
-      );
       try {
-        final details = ContentDetails.fromMetadata(
-          widget.contentItem.initialData!,
-        );
-        _logger.d(
-          'Successfully loaded offline content with ${details.seasons?.length ?? 0} seasons',
-        );
+        ContentDetails.fromMetadata(widget.contentItem.initialData!);
       } catch (e) {
         _logger.e('Failed to parse offline metadata during init: $e', error: e);
       }
@@ -130,9 +124,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       try {
         final pipContentItem = ContentItem.fromJson(pipState.contentItemJson!);
         if (pipContentItem.id == widget.contentItem.id) {
-          _logger.i(
-            '[Playback] Restoring from PIP for ${widget.contentItem.id}',
-          );
           _receivedPlayer = pipState.player;
           _receivedVideoController = pipState.videoController;
 
@@ -170,9 +161,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     final playbackCache = ref.read(playbackStateProvider);
     if (playbackCache != null &&
         playbackCache.contentId == widget.contentItem.id) {
-      _logger.i(
-        '[Playback] Restoring cached playback state for ${widget.contentItem.id}',
-      );
       _receivedPlayer = playbackCache.player;
       _receivedVideoController = playbackCache.videoController;
       _currentVideoUrl = playbackCache.currentVideoUrl;
@@ -182,9 +170,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       _currentEpisodeTitle = playbackCache.currentEpisodeTitle;
       if (playbackCache.currentPosition != null) {
         _initialPosition = playbackCache.currentPosition;
-        _logger.d(
-          '[Playback] Restored position: ${playbackCache.currentPosition}',
-        );
       }
 
       Future.microtask(() {
@@ -235,10 +220,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
         String resolvedUrl = episode.link;
 
         if (isOffline) {
-          _logger.i(
-            'Loading offline content: Season ${widget.contentItem.initialSeasonNumber}, Episode ${widget.contentItem.initialEpisodeNumber}',
-          );
-
           final downloadedContent = ref.read(
             downloadedContentItemProvider((
               contentId: widget.contentItem.id,
@@ -249,12 +230,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           if (downloadedContent != null &&
               downloadedContent.localPath.isNotEmpty) {
             resolvedUrl = downloadedContent.localPath;
-            _logger.d('Using local file: $resolvedUrl');
-          } else {
-            _logger.w(
-              'Downloaded content not found for episode ${widget.contentItem.initialEpisodeNumber}',
-            );
-          }
+          } else {}
         }
 
         setState(() {
@@ -287,6 +263,89 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     return match != null ? int.parse(match.group(0)!) : 0;
   }
 
+  Future<void> _fetchInitialPositionForMovie(String serverId) async {
+    if (widget.contentItem.contentType != 'movie') return;
+    if (_hasAppliedInitialPosition) return;
+
+    try {
+      final watchHistoryAsync = await ref.refresh(
+        contentWatchHistoryProvider((
+          ftpServerId: serverId,
+          contentId: widget.contentItem.id,
+        )).future,
+      );
+
+      if (watchHistoryAsync?.progress != null) {
+        final currentTime = watchHistoryAsync!.progress!.currentTime;
+        final duration = watchHistoryAsync.progress!.duration;
+
+        if (duration > 0) {
+          final percentage = (currentTime / duration) * 100;
+          if (percentage >= 95) {
+            _initialPosition = Duration.zero;
+          } else if (currentTime > 5) {
+            _initialPosition = Duration(seconds: currentTime.toInt());
+          }
+          _hasAppliedInitialPosition = true;
+        }
+      } else {}
+    } catch (e) {
+      _logger.e('Error fetching watch history for movie: $e');
+    }
+  }
+
+  Future<Duration?> _fetchInitialPositionForEpisode(
+    String serverId,
+    int seasonNumber,
+    int episodeNumber,
+  ) async {
+    try {
+      final watchHistoryAsync = await ref.refresh(
+        contentWatchHistoryProvider((
+          ftpServerId: serverId,
+          contentId: widget.contentItem.id,
+        )).future,
+      );
+
+      if (watchHistoryAsync?.seriesProgress != null) {
+        final season = watchHistoryAsync!.seriesProgress!
+            .where((s) => s.seasonNumber == seasonNumber)
+            .firstOrNull;
+
+        if (season == null) {
+          return Duration.zero;
+        }
+
+        final episode = season.episodes
+            .where((e) => e.episodeNumber == episodeNumber)
+            .firstOrNull;
+
+        if (episode == null) {
+          return Duration.zero;
+        }
+
+        if (episode.progress.currentTime > 0 && episode.progress.duration > 0) {
+          final currentTime = episode.progress.currentTime;
+          final duration = episode.progress.duration;
+          final percentage = (currentTime / duration) * 100;
+          if (percentage >= 95) {
+            return Duration.zero;
+          } else if (currentTime > 0) {
+            final position = Duration(seconds: currentTime.toInt());
+            return position;
+          }
+        }
+      }
+
+      return Duration.zero;
+    } catch (e) {
+      _logger.e(
+        'Error fetching watch history for S${seasonNumber}E$episodeNumber: $e',
+      );
+      return Duration.zero;
+    }
+  }
+
   String _resolveVideoUrl(WidgetRef ref, String originalUrl) {
     final downloadedContent = ref.read(
       downloadedContentItemProvider((
@@ -303,6 +362,21 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     return originalUrl;
   }
 
+  String? _resolveCurrentServerId() {
+    final workingServersAsync = ref.read(workingFtpServersProvider);
+
+    if (!workingServersAsync.hasValue) {
+      return null;
+    }
+
+    final servers = workingServersAsync.value!;
+    final server = servers
+        .where((s) => s.name == widget.contentItem.serverName)
+        .firstOrNull;
+
+    return server?.id;
+  }
+
   @override
   void deactivate() {
     try {
@@ -314,9 +388,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           videoPlayerState.player != null &&
           videoPlayerState.videoController != null &&
           !(_activatedPipFromHere && pipState.isActive)) {
-        _logger.i(
-          '[Playback] Caching playback state for ${widget.contentItem.id}',
-        );
         WidgetsBinding.instance.addPostFrameCallback((_) {
           try {
             playbackNotifier.cachePlaybackState(
@@ -578,14 +649,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
         if (downloadedContent != null &&
             downloadedContent.localPath.isNotEmpty) {
           resolvedLink = downloadedContent.localPath;
-          _logger.d(
-            'Resolved S$seasonNumber E$episodeNumber to: $resolvedLink',
-          );
-        } else {
-          _logger.w(
-            'Could not resolve S$seasonNumber E$episodeNumber - not found in downloads',
-          );
-        }
+        } else {}
 
         updatedEpisodes.add(
           Episode(
@@ -634,7 +698,6 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
           details = _resolveOfflineEpisodeLinks(details);
         }
       } catch (e) {
-        _logger.e('Failed to parse offline metadata: $e', error: e);
         return _buildErrorWidget(
           'Failed to load offline content',
           e.toString(),
@@ -645,7 +708,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
         canPop: true,
         onPopInvokedWithResult: (didPop, result) {},
         child: Scaffold(
-          backgroundColor: AppColors.black,
+          backgroundColor: Colors.transparent,
           body: SafeArea(
             bottom: false,
             child: Stack(
@@ -669,8 +732,8 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                     child: Container(
                       color: _isDragging
                           ? AppColors.surface.withValues(
-                              alpha: (1.0 - (_getSwipeProgress(context) * 0.9))
-                                  .clamp(0.05, 1.0),
+                              alpha: (1.0 - _getSectionHideProgress(context))
+                                  .clamp(0.0, 1.0),
                             )
                           : AppColors.surface,
                       child: _buildOfflineContent(details),
@@ -726,9 +789,8 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                       child: Container(
                         color: _isDragging
                             ? AppColors.surface.withValues(
-                                alpha:
-                                    (1.0 - (_getSwipeProgress(context) * 0.9))
-                                        .clamp(0.05, 1.0),
+                                alpha: (1.0 - _getSectionHideProgress(context))
+                                    .clamp(0.0, 1.0),
                               )
                             : AppColors.surface,
                         child: _buildContent(details),
@@ -852,6 +914,21 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     final videoUrl = _currentVideoUrl ?? details.videoUrl;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!details.isSeries && !_hasAppliedInitialPosition) {
+        final workingServersAsync = ref.read(workingFtpServersProvider);
+        final serverId = workingServersAsync.maybeWhen(
+          data: (servers) => servers.isNotEmpty ? servers.first.id : null,
+          orElse: () => null,
+        );
+        if (serverId != null) {
+          _fetchInitialPositionForMovie(serverId).then((_) {
+            if (mounted && _initialPosition != null) {
+              setState(() {});
+            }
+          });
+        }
+      }
+
       if (_currentVideoUrl == null && videoUrl != null && videoUrl.isNotEmpty) {
         setState(() {
           _currentVideoUrl = videoUrl;
@@ -1004,6 +1081,21 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     final videoUrl = _currentVideoUrl ?? details.videoUrl;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!details.isSeries && !_hasAppliedInitialPosition) {
+        final workingServersAsync = ref.read(workingFtpServersProvider);
+        final serverId = workingServersAsync.maybeWhen(
+          data: (servers) => servers.isNotEmpty ? servers.first.id : null,
+          orElse: () => null,
+        );
+        if (serverId != null) {
+          _fetchInitialPositionForMovie(serverId).then((_) {
+            if (mounted && _initialPosition != null) {
+              setState(() {});
+            }
+          });
+        }
+      }
+
       if (_currentVideoUrl == null && videoUrl != null && videoUrl.isNotEmpty) {
         setState(() {
           _currentVideoUrl = videoUrl;
@@ -1269,22 +1361,47 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
                   child: AnimatedOpacity(
                     duration: const Duration(milliseconds: 150),
                     opacity: sectionOpacity,
-                    child: SeasonsSection(
-                      details: details,
-                      tabController: _tabController!,
-                      currentVideoUrl: _currentVideoUrl,
-                      onEpisodeTap: _handleEpisodeTap,
-                      onEpisodeDownload:
-                          (season, seasonNumber, episodeNumber, episode) =>
-                              _buildEpisodeDownloadButton(
-                                details,
-                                season,
-                                seasonNumber,
-                                episodeNumber,
-                                episode,
-                              ),
-                      skipInitialAnimation:
-                          _activatedPipFromHere || _receivedPlayer != null,
+                    child: Builder(
+                      builder: (context) {
+                        List<SeasonProgress>? seriesProgress;
+                        final serverId = _resolveCurrentServerId();
+
+                        if (serverId != null) {
+                          final watchHistoryAsync = ref.watch(
+                            contentWatchHistoryProvider((
+                              ftpServerId: serverId,
+                              contentId: widget.contentItem.id,
+                            )),
+                          );
+
+                          if (watchHistoryAsync.hasValue &&
+                              watchHistoryAsync.value != null) {
+                            seriesProgress =
+                                watchHistoryAsync.value!.seriesProgress;
+                            _liveSeriesProgress = seriesProgress;
+                          }
+                        }
+
+                        return SeasonsSection(
+                          details: details,
+                          tabController: _tabController!,
+                          currentVideoUrl: _currentVideoUrl,
+                          onEpisodeTap: _handleEpisodeTap,
+                          onEpisodeDownload:
+                              (season, seasonNumber, episodeNumber, episode) =>
+                                  _buildEpisodeDownloadButton(
+                                    details,
+                                    season,
+                                    seasonNumber,
+                                    episodeNumber,
+                                    episode,
+                                  ),
+                          skipInitialAnimation:
+                              _activatedPipFromHere || _receivedPlayer != null,
+                          seriesProgress: _liveSeriesProgress ?? seriesProgress,
+                          progressUpdateCounter: _progressUpdateCounter,
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -1334,12 +1451,68 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
     );
   }
 
+  void _ensureEpisodeInLiveProgress(
+    int seasonNumber,
+    int episodeNumber,
+    String episodeTitle,
+  ) {
+    _liveSeriesProgress ??= [];
+
+    final seasonIndex = _liveSeriesProgress!.indexWhere(
+      (s) => s.seasonNumber == seasonNumber,
+    );
+
+    if (seasonIndex == -1) {
+      final newEpisodeId =
+          '${widget.contentItem.id}_s${seasonNumber}_e$episodeNumber';
+      _liveSeriesProgress!.add(
+        SeasonProgress(
+          seasonNumber: seasonNumber,
+          episodes: [
+            EpisodeProgress(
+              episodeNumber: episodeNumber,
+              episodeId: newEpisodeId,
+              episodeTitle: episodeTitle,
+              status: WatchStatus.watching,
+              progress: ProgressInfo(
+                currentTime: 0,
+                duration: 0,
+                percentage: 0,
+              ),
+              lastWatchedAt: DateTime.now(),
+            ),
+          ],
+        ),
+      );
+    } else {
+      final season = _liveSeriesProgress![seasonIndex];
+      final episodeIndex = season.episodes.indexWhere(
+        (e) => e.episodeNumber == episodeNumber,
+      );
+
+      if (episodeIndex == -1) {
+        final newEpisodeId =
+            '${widget.contentItem.id}_s${seasonNumber}_e$episodeNumber';
+        season.episodes.add(
+          EpisodeProgress(
+            episodeNumber: episodeNumber,
+            episodeId: newEpisodeId,
+            episodeTitle: episodeTitle,
+            status: WatchStatus.watching,
+            progress: ProgressInfo(currentTime: 0, duration: 0, percentage: 0),
+            lastWatchedAt: DateTime.now(),
+          ),
+        );
+      } else {}
+    }
+  }
+
   void _handleEpisodeTap(
     Season season,
     int seasonNumber,
     int episodeNumber,
     Episode episode,
-  ) {
+  ) async {
     final workingServersAsync = ref.read(workingFtpServersProvider);
     final serverId = workingServersAsync.maybeWhen(
       data: (servers) => servers
@@ -1369,36 +1542,20 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
 
     Duration? newPosition;
     if (serverId != null) {
-      final watchHistoryAsync = ref.read(
-        contentWatchHistoryProvider((
-          ftpServerId: serverId,
-          contentId: widget.contentItem.id,
-        )),
+      newPosition = await _fetchInitialPositionForEpisode(
+        serverId,
+        seasonNumber,
+        episodeNumber,
       );
-
-      watchHistoryAsync.whenData((watchHistory) {
-        if (watchHistory != null) {
-          for (final season in watchHistory.seriesProgress ?? []) {
-            final ep = season.episodes.firstWhere(
-              (e) => e.episodeId == newEpisodeId,
-              orElse: () => season.episodes.first,
-            );
-            if (ep.episodeId == newEpisodeId) {
-              newPosition = Duration(seconds: ep.progress.currentTime.toInt());
-              break;
-            }
-          }
-        }
-      });
     }
+
+    if (!mounted) return;
 
     setState(() {
       final isOffline = ref.read(offlineModeProvider);
       String resolvedUrl = episode.link;
 
       if (isOffline) {
-        _logger.i('Playing offline episode: S$seasonNumber E$episodeNumber');
-
         final downloadedContent = ref.read(
           downloadedContentItemProvider((
             contentId: widget.contentItem.id,
@@ -1409,12 +1566,7 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
         if (downloadedContent != null &&
             downloadedContent.localPath.isNotEmpty) {
           resolvedUrl = downloadedContent.localPath;
-          _logger.d('Resolved to local file: $resolvedUrl');
-        } else {
-          _logger.w(
-            'Failed to resolve local file for S$seasonNumber E$episodeNumber',
-          );
-        }
+        } else {}
       }
 
       _currentVideoUrl = resolvedUrl;
@@ -1423,6 +1575,12 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
       _currentEpisodeId = newEpisodeId;
       _currentEpisodeTitle = episode.title;
       _initialPosition = newPosition;
+
+      _ensureEpisodeInLiveProgress(seasonNumber, episodeNumber, episode.title);
+      if (_liveSeriesProgress != null) {
+        _liveSeriesProgress = [..._liveSeriesProgress!];
+        _progressUpdateCounter++;
+      }
     });
 
     ref
@@ -1590,6 +1748,45 @@ class _ContentDetailsScreenState extends ConsumerState<ContentDetailsScreen>
             'quality': details.quality,
           },
         );
+
+    if (_currentSeasonNumber != null &&
+        _currentEpisodeNumber != null &&
+        _liveSeriesProgress != null) {
+      try {
+        final seasonIndex = _liveSeriesProgress!.indexWhere(
+          (s) => s.seasonNumber == _currentSeasonNumber,
+        );
+        if (seasonIndex != -1) {
+          final season = _liveSeriesProgress![seasonIndex];
+          final episodeIndex = season.episodes.indexWhere(
+            (e) => e.episodeNumber == _currentEpisodeNumber,
+          );
+          if (episodeIndex != -1) {
+            final updatedProgress = ProgressInfo(
+              currentTime: currentTime,
+              duration: duration,
+              percentage: duration > 0 ? (currentTime / duration) * 100 : 0.0,
+            );
+
+            season.episodes[episodeIndex] = EpisodeProgress(
+              episodeNumber: season.episodes[episodeIndex].episodeNumber,
+              episodeId: season.episodes[episodeIndex].episodeId,
+              episodeTitle: season.episodes[episodeIndex].episodeTitle,
+              status: season.episodes[episodeIndex].status,
+              progress: updatedProgress,
+              lastWatchedAt: season.episodes[episodeIndex].lastWatchedAt,
+            );
+
+            setState(() {
+              _liveSeriesProgress = [..._liveSeriesProgress!];
+              _progressUpdateCounter++;
+            });
+          }
+        }
+      } catch (e) {
+        // Silently ignore errors updating live series progress
+      }
+    }
   }
 }
 

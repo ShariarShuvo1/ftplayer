@@ -140,6 +140,67 @@ class ContentItem {
       description: json['Story']?.toString() ?? json['description']?.toString(),
     );
   }
+
+  factory ContentItem.fromAmaderFtp(
+    Map<String, dynamic> json,
+    String baseUrl,
+    String serverName,
+  ) {
+    final itemId = (json['Id'] ?? '').toString();
+    final imageTags = json['ImageTags'] as Map<String, dynamic>?;
+    final primaryTag = imageTags?['Primary']?.toString() ?? '';
+    final backdropTags = json['BackdropImageTags'] as List?;
+    final backdropTag = (backdropTags != null && backdropTags.isNotEmpty)
+        ? backdropTags[0].toString()
+        : '';
+
+    String posterUrl = '';
+    if (itemId.isNotEmpty) {
+      if (primaryTag.isNotEmpty) {
+        posterUrl =
+            '$baseUrl/Items/$itemId/Images/Primary?tag=$primaryTag&quality=90&fillWidth=300&fillHeight=450';
+      } else if (backdropTag.isNotEmpty) {
+        posterUrl =
+            '$baseUrl/Items/$itemId/Images/Backdrop/0?tag=$backdropTag&quality=90&fillWidth=300&fillHeight=450';
+      }
+    }
+
+    final type = json['Type']?.toString() ?? '';
+    final normalizedType = type == 'Series' ? 'series' : 'movie';
+
+    final rating = json['CommunityRating'];
+    double? parsedRating;
+    if (rating != null && rating is num) {
+      parsedRating = rating.toDouble();
+    }
+
+    final officialRating = json['OfficialRating']?.toString();
+    final hasSubtitles = json['HasSubtitles'] == true;
+    final container = json['Container']?.toString();
+
+    String? quality;
+    if (officialRating != null && officialRating.isNotEmpty) {
+      quality = officialRating;
+    } else if (hasSubtitles) {
+      quality = 'Subtitles';
+    } else if (container != null && container.isNotEmpty) {
+      quality = container.toUpperCase();
+    }
+
+    return ContentItem(
+      id: itemId,
+      title: (json['Name'] ?? '').toString(),
+      posterUrl: posterUrl,
+      serverName: serverName,
+      serverType: 'amaderftp',
+      year: json['ProductionYear']?.toString(),
+      quality: quality,
+      rating: parsedRating,
+      contentType: normalizedType,
+      description: json['Overview']?.toString(),
+      initialData: null,
+    );
+  }
 }
 
 class HomeContentData {

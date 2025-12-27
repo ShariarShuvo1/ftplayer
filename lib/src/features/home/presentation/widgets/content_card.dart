@@ -1,13 +1,11 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shimmer_animation/shimmer_animation.dart';
 import 'package:go_router/go_router.dart';
-import 'dart:io';
 
 import '../../../../app/theme/app_colors.dart';
 import '../../../content_details/presentation/content_details_screen.dart';
 import '../../data/home_models.dart';
+import 'universal_poster_image.dart';
 
 class ContentCard extends ConsumerWidget {
   const ContentCard({required this.content, super.key});
@@ -20,42 +18,22 @@ class ContentCard extends ConsumerWidget {
     }
   }
 
-  Widget _buildImage(String imagePath) {
-    final isLocalFile =
-        imagePath.startsWith('/') ||
-        imagePath.startsWith('file://') ||
-        File(imagePath).existsSync();
-
-    if (isLocalFile) {
-      final file = File(imagePath);
-      if (file.existsSync()) {
-        return Image.file(
-          file,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => Container(
-            color: AppColors.surface,
-            child: const Icon(Icons.movie, color: AppColors.textLow, size: 40),
-          ),
-        );
-      }
-    }
-
-    return CachedNetworkImage(
-      imageUrl: imagePath,
-      fit: BoxFit.cover,
-      placeholder: (context, url) => Shimmer(
-        color: AppColors.primary.withValues(alpha: 0.3),
-        child: Container(color: AppColors.surface),
-      ),
-      errorWidget: (context, url, error) => Container(
-        color: AppColors.surface,
-        child: const Icon(Icons.movie, color: AppColors.textLow, size: 40),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final placeholderIcon = content.contentType == 'series'
+        ? Icons.tv
+        : Icons.movie;
+
+    bool isLocalFile(String url) {
+      if (url.isEmpty) return false;
+      final uri = Uri.tryParse(url);
+      if (uri != null && uri.hasScheme) {
+        return uri.scheme == 'file';
+      }
+      // Treat non-http(s) paths (absolute file paths) as local
+      return !(url.startsWith('http://') || url.startsWith('https://'));
+    }
+
     return GestureDetector(
       onTap: () => _navigate(context),
       child: SizedBox(
@@ -66,22 +44,15 @@ class ContentCard extends ConsumerWidget {
           children: [
             Container(
               margin: const EdgeInsets.only(right: 12),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
+              child: AspectRatio(
+                aspectRatio: 2 / 3,
                 child: Stack(
                   children: [
-                    AspectRatio(
-                      aspectRatio: 2 / 3,
-                      child: content.posterUrl.isNotEmpty
-                          ? _buildImage(content.posterUrl)
-                          : Container(
-                              color: AppColors.surface,
-                              child: const Icon(
-                                Icons.movie,
-                                color: AppColors.textLow,
-                                size: 40,
-                              ),
-                            ),
+                    UniversalPosterImage(
+                      imageUrl: content.posterUrl,
+                      isLocalFile: isLocalFile(content.posterUrl),
+                      placeholderIcon: placeholderIcon,
+                      borderRadius: 8,
                     ),
                     Positioned(
                       top: 6,

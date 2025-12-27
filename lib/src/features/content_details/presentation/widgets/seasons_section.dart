@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../data/content_details_models.dart';
+import '../../../watch_history/data/watch_history_models.dart';
 
 class SeasonsSection extends StatefulWidget {
   const SeasonsSection({
@@ -10,6 +13,8 @@ class SeasonsSection extends StatefulWidget {
     required this.onEpisodeTap,
     this.onEpisodeDownload,
     this.skipInitialAnimation = false,
+    this.seriesProgress,
+    this.progressUpdateCounter = 0,
     super.key,
   });
 
@@ -31,6 +36,8 @@ class SeasonsSection extends StatefulWidget {
   )?
   onEpisodeDownload;
   final bool skipInitialAnimation;
+  final List<SeasonProgress>? seriesProgress;
+  final int progressUpdateCounter;
 
   @override
   State<SeasonsSection> createState() => _SeasonsSectionState();
@@ -40,6 +47,7 @@ class _SeasonsSectionState extends State<SeasonsSection>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   bool _isExpanded = true;
+  late Timer _rebuildTimer;
 
   @override
   void initState() {
@@ -55,10 +63,26 @@ class _SeasonsSectionState extends State<SeasonsSection>
         _animationController.forward();
       }
     }
+
+    _rebuildTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(SeasonsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.progressUpdateCounter != widget.progressUpdateCounter ||
+        oldWidget.seriesProgress != widget.seriesProgress) {
+      setState(() {});
+    }
   }
 
   @override
   void dispose() {
+    _rebuildTimer.cancel();
     _animationController.dispose();
     super.dispose();
   }
@@ -212,6 +236,21 @@ class _SeasonsSectionState extends State<SeasonsSection>
         final isPlaying = widget.currentVideoUrl == episode.link;
         final episodeNumber = index + 1;
 
+        EpisodeProgress? seasonProgress;
+        if (widget.seriesProgress != null) {
+          final foundSeason = widget.seriesProgress!
+              .where((s) => s.seasonNumber == seasonNumber)
+              .firstOrNull;
+          if (foundSeason != null) {
+            seasonProgress = foundSeason.episodes
+                .where((e) => e.episodeNumber == episodeNumber)
+                .firstOrNull;
+          }
+        }
+
+        final hasProgress = seasonProgress != null;
+        final progressPercentage = seasonProgress?.progress.percentage ?? 0.0;
+
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
@@ -240,95 +279,119 @@ class _SeasonsSectionState extends State<SeasonsSection>
               },
               child: Padding(
                 padding: const EdgeInsets.all(16),
-                child: Row(
+                child: Column(
                   children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: isPlaying
-                            ? AppColors.primary
-                            : AppColors.surfaceAlt,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Center(
-                        child: isPlaying
-                            ? const Icon(
-                                Icons.pause,
-                                color: AppColors.black,
-                                size: 24,
-                              )
-                            : Text(
-                                episodeNumber.toString(),
-                                style: const TextStyle(
-                                  color: AppColors.textMid,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            episode.title,
-                            style: TextStyle(
-                              color: isPlaying
-                                  ? AppColors.primary
-                                  : AppColors.textHigh,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              height: 1.3,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                    Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: isPlaying
+                                ? AppColors.primary
+                                : AppColors.surfaceAlt,
+                            borderRadius: BorderRadius.circular(8),
                           ),
-                          if (isPlaying) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.play_circle_filled,
-                                  size: 14,
-                                  color: AppColors.primary.withValues(
-                                    alpha: 0.8,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Now Playing',
-                                  style: TextStyle(
-                                    color: AppColors.primary.withValues(
-                                      alpha: 0.8,
+                          child: Center(
+                            child: isPlaying
+                                ? const Icon(
+                                    Icons.pause,
+                                    color: AppColors.black,
+                                    size: 24,
+                                  )
+                                : Text(
+                                    episodeNumber.toString(),
+                                    style: const TextStyle(
+                                      color: AppColors.textMid,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
                                     ),
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
                                   ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                episode.title,
+                                style: TextStyle(
+                                  color: isPlaying
+                                      ? AppColors.primary
+                                      : AppColors.textHigh,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.3,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (isPlaying) ...[
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.play_circle_filled,
+                                      size: 14,
+                                      color: AppColors.primary.withValues(
+                                        alpha: 0.8,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Now Playing',
+                                      style: TextStyle(
+                                        color: AppColors.primary.withValues(
+                                          alpha: 0.8,
+                                        ),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
-                            ),
-                          ],
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        if (widget.onEpisodeDownload != null) ...[
+                          widget.onEpisodeDownload!(
+                            season,
+                            seasonNumber,
+                            episodeNumber,
+                            episode,
+                          ),
+                          const SizedBox(width: 8),
                         ],
-                      ),
+                        Icon(
+                          isPlaying
+                              ? Icons.volume_up
+                              : Icons.play_circle_outline,
+                          color: isPlaying
+                              ? AppColors.primary
+                              : AppColors.textLow,
+                          size: 24,
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    if (widget.onEpisodeDownload != null) ...[
-                      widget.onEpisodeDownload!(
-                        season,
-                        seasonNumber,
-                        episodeNumber,
-                        episode,
+                    if (hasProgress) ...[
+                      const SizedBox(height: 12),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: (progressPercentage / 100).clamp(0.0, 1.0),
+                          backgroundColor: AppColors.outline,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            progressPercentage >= 95
+                                ? AppColors.success
+                                : AppColors.primary,
+                          ),
+                          minHeight: 3,
+                        ),
                       ),
-                      const SizedBox(width: 8),
                     ],
-                    Icon(
-                      isPlaying ? Icons.volume_up : Icons.play_circle_outline,
-                      color: isPlaying ? AppColors.primary : AppColors.textLow,
-                      size: 24,
-                    ),
                   ],
                 ),
               ),

@@ -329,7 +329,7 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
                   ),
                 ),
               ),
-              _buildCornerIndicator(),
+              IgnorePointer(child: _buildCornerIndicator()),
             ],
           ),
         ),
@@ -344,6 +344,7 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
     Color? backgroundColor,
   }) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () async {
         if (onTap is VoidCallback) {
           onTap();

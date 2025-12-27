@@ -89,40 +89,29 @@ class _SearchOverlayState extends State<SearchOverlay>
   }
 
   Future<void> _fetchSuggestions(String query) async {
-    _logger.i('Fetching suggestions for query: $query');
-
     if (!mounted || query != _searchController.text.trim()) return;
 
     if (_lastRequestQuery == query) {
-      _logger.d('Skipping duplicate request for query: $query');
       return;
     }
     _lastRequestQuery = query;
 
     try {
-      _logger.d('Making API request to Google Suggestions API');
-
       final response = await _dio.get(
         'https://suggestqueries.google.com/complete/search',
         queryParameters: {'client': 'firefox', 'q': query, 'hl': 'en'},
         options: Options(responseType: ResponseType.plain),
       );
 
-      _logger.d('API Response status: ${response.statusCode}');
-      _logger.d('API Response data: ${response.data}');
-
       if (!mounted || query != _searchController.text.trim()) return;
 
       final jsonpString = response.data as String;
       final suggestions = _parseSuggestions(jsonpString);
 
-      _logger.i('Parsed ${suggestions.length} suggestions from API');
-
       if (mounted && query == _searchController.text.trim()) {
         setState(() {
           _suggestions = suggestions.take(5).toList();
         });
-        _logger.i('Set ${_suggestions.length} suggestions in UI');
       }
     } catch (e, stackTrace) {
       _logger.e('Error fetching suggestions', error: e, stackTrace: stackTrace);
@@ -130,22 +119,15 @@ class _SearchOverlayState extends State<SearchOverlay>
   }
 
   List<String> _parseSuggestions(String jsonpString) {
-    _logger.d('Parsing suggestions from JSONP response');
-    _logger.d('JSONP string length: ${jsonpString.length}');
-
     try {
       final startIndex = jsonpString.indexOf('[');
       final endIndex = jsonpString.lastIndexOf(']');
 
       if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
-        _logger.w('Invalid JSON array boundaries');
         return [];
       }
 
       final jsonString = jsonpString.substring(startIndex, endIndex + 1);
-      _logger.d(
-        'Extracted JSON: ${jsonString.substring(0, jsonString.length > 100 ? 100 : jsonString.length)}...',
-      );
 
       // Structure: ["query", ["suggestion1", "suggestion2", ...], [], {...}]
       // Find the second array (suggestions array)
@@ -166,11 +148,8 @@ class _SearchOverlayState extends State<SearchOverlay>
       }
 
       if (secondArrayStart == -1) {
-        _logger.w('Could not find suggestions array');
         return [];
       }
-
-      _logger.d('Found suggestions array starting at index: $secondArrayStart');
 
       // Find the end of the suggestions array
       int suggestionsEnd = -1;
@@ -188,7 +167,6 @@ class _SearchOverlayState extends State<SearchOverlay>
       }
 
       if (suggestionsEnd == -1) {
-        _logger.w('Could not find end of suggestions array');
         return [];
       }
 
@@ -196,17 +174,12 @@ class _SearchOverlayState extends State<SearchOverlay>
         secondArrayStart + 1,
         suggestionsEnd,
       );
-      _logger.d(
-        'Suggestions substring: ${suggestionsStr.substring(0, suggestionsStr.length > 100 ? 100 : suggestionsStr.length)}...',
-      );
 
       final suggestions = <String>[];
 
       // Extract all quoted strings
       RegExp regExp = RegExp(r'"([^"]*)"');
       final matches = regExp.allMatches(suggestionsStr);
-
-      _logger.d('Found ${matches.length} regex matches');
 
       for (final match in matches) {
         var suggestion = match.group(1) ?? '';
@@ -219,11 +192,9 @@ class _SearchOverlayState extends State<SearchOverlay>
             // If decoding fails, use the original string
           }
           suggestions.add(suggestion);
-          _logger.d('Added suggestion: $suggestion');
         }
       }
 
-      _logger.i('Successfully parsed ${suggestions.length} valid suggestions');
       return suggestions;
     } catch (e, stackTrace) {
       _logger.e('Error parsing suggestions', error: e, stackTrace: stackTrace);
