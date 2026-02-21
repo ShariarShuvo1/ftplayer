@@ -56,3 +56,7 @@ app.*.map.json
 .env.staging
 
 API_GUIDE.md
+amderftp-api-guide.md
+circleftp-api-guide.md
+dflix-api-guide.md
+seed.ts

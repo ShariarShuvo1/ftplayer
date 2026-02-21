@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_colors.dart';
+import '../../../core/utils/vibration_helper.dart';
 import '../../../core/widgets/app_scaffold.dart';
 import '../../../core/widgets/right_drawer.dart';
 import '../../../core/widgets/search_overlay.dart';
 import '../../../state/downloads/download_provider.dart';
 import '../../../state/connectivity/connectivity_provider.dart';
 import '../../../state/ftp/working_ftp_servers_provider.dart';
+import '../../../state/settings/vibration_settings_provider.dart';
 import '../../home/data/home_models.dart';
 import '../../content_details/presentation/content_details_screen.dart';
 import '../../search/presentation/search_result_screen.dart';
@@ -33,6 +35,14 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() async {
+      if (!_tabController.indexIsChanging) {
+        final vibrationSettings = ref.read(vibrationSettingsProvider);
+        if (vibrationSettings.enabled && vibrationSettings.vibrateOnTabChange) {
+          await VibrationHelper.vibrate(vibrationSettings.strength);
+        }
+      }
+    });
   }
 
   @override
@@ -42,6 +52,10 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
   }
 
   void _toggleSearch() {
+    final vibrationSettings = ref.read(vibrationSettingsProvider);
+    if (vibrationSettings.enabled && vibrationSettings.vibrateOnAppbar) {
+      VibrationHelper.vibrate(vibrationSettings.strength);
+    }
     setState(() {
       _showSearch = !_showSearch;
     });
@@ -52,7 +66,7 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
       setState(() {
         _showSearch = false;
       });
-      context.push(SearchResultScreen.path, extra: query);
+      context.pushReplacement(SearchResultScreen.path, extra: query);
     }
   }
 
@@ -129,6 +143,16 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
 
     return AppScaffold(
       title: 'Downloads',
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () {
+          final vibrationSettings = ref.read(vibrationSettingsProvider);
+          if (vibrationSettings.enabled && vibrationSettings.vibrateOnAppbar) {
+            VibrationHelper.vibrate(vibrationSettings.strength);
+          }
+          context.pop();
+        },
+      ),
       endDrawer: const RightDrawer(),
       actions: [
         workingServersAsync.when(
@@ -163,53 +187,69 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
           builder: (context) {
             return IconButton(
               tooltip: 'Menu',
-              onPressed: () => Scaffold.of(context).openEndDrawer(),
+              onPressed: () {
+                final vibrationSettings = ref.read(vibrationSettingsProvider);
+                if (vibrationSettings.enabled &&
+                    vibrationSettings.vibrateOnAppbar) {
+                  VibrationHelper.vibrate(vibrationSettings.strength);
+                }
+                Scaffold.of(context).openEndDrawer();
+              },
               icon: const Icon(Icons.menu),
               color: AppColors.primary,
             );
           },
         ),
       ],
-      bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(56),
-        child: Container(
-          decoration: BoxDecoration(
-            color: AppColors.black,
-            border: Border(
-              bottom: BorderSide(color: AppColors.outline, width: 0.5),
-            ),
-          ),
-          child: TabBar(
-            controller: _tabController,
-            isScrollable: false,
-            indicatorSize: TabBarIndicatorSize.tab,
-            indicator: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.primary, width: 1.5),
-            ),
-            dividerColor: Colors.transparent,
-            labelColor: AppColors.primary,
-            unselectedLabelColor: AppColors.textMid,
-            labelStyle: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.3,
-            ),
-            unselectedLabelStyle: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-            labelPadding: const EdgeInsets.symmetric(horizontal: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            tabs: tabs,
-          ),
-        ),
-      ),
       padding: EdgeInsets.zero,
       body: Stack(
         children: [
-          TabBarView(controller: _tabController, children: children),
+          Column(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.black,
+                  border: Border(
+                    bottom: BorderSide(color: AppColors.outline, width: 0.5),
+                  ),
+                ),
+                child: TabBar(
+                  controller: _tabController,
+                  isScrollable: false,
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  indicator: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.primary, width: 1.5),
+                  ),
+                  dividerColor: Colors.transparent,
+                  labelColor: AppColors.primary,
+                  unselectedLabelColor: AppColors.textMid,
+                  labelStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
+                  unselectedLabelStyle: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  tabs: tabs,
+                ),
+              ),
+              Expanded(
+                child: TabBarView(
+                  controller: _tabController,
+                  children: children,
+                ),
+              ),
+            ],
+          ),
           if (_showSearch)
             Positioned.fill(
               child: SearchOverlay(
@@ -482,32 +522,98 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen>
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text(
-          'Delete Download',
-          style: TextStyle(color: AppColors.textHigh),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppColors.surfaceAlt, width: 1),
+        ),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppColors.danger.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.warning_rounded,
+                color: AppColors.danger,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Delete Download',
+                style: TextStyle(
+                  color: AppColors.textHigh,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
         ),
         content: Text(
           'Are you sure you want to delete "${download.isEpisode ? download.displayTitle : download.title}"? This will remove the downloaded file.',
-          style: const TextStyle(color: AppColors.textMid),
+          style: const TextStyle(
+            color: AppColors.textMid,
+            fontSize: 14,
+            height: 1.5,
+          ),
         ),
+        actionsPadding: const EdgeInsets.all(16),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () {
+              final vibrationSettings = ref.read(vibrationSettingsProvider);
+              if (vibrationSettings.enabled &&
+                  vibrationSettings.vibrateOnDownloadScreen) {
+                VibrationHelper.vibrate(vibrationSettings.strength);
+              }
+              Navigator.of(context).pop();
+            },
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              backgroundColor: AppColors.surfaceAlt,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
             child: const Text(
               'Cancel',
-              style: TextStyle(color: AppColors.textMid),
+              style: TextStyle(
+                color: AppColors.textMid,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
+          const SizedBox(width: 8),
           TextButton(
             onPressed: () {
+              final vibrationSettings = ref.read(vibrationSettingsProvider);
+              if (vibrationSettings.enabled &&
+                  vibrationSettings.vibrateOnDownloadScreen) {
+                VibrationHelper.vibrate(vibrationSettings.strength);
+              }
               Navigator.of(context).pop();
               ref
                   .read(downloadNotifierProvider.notifier)
                   .deleteDownload(download.id);
             },
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              backgroundColor: AppColors.danger.withValues(alpha: 0.2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: const BorderSide(color: AppColors.danger, width: 1),
+              ),
+            ),
             child: const Text(
               'Delete',
-              style: TextStyle(color: AppColors.danger),
+              style: TextStyle(
+                color: AppColors.danger,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],

@@ -4,11 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:logger/logger.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/router.dart';
+import '../../core/utils/vibration_helper.dart';
 import '../../state/pip/pip_provider.dart';
+import '../../state/settings/vibration_settings_provider.dart';
+import '../../state/watch_history/watch_history_provider.dart';
+import '../ftp_servers/data/ftp_servers_local_data.dart';
 import '../home/data/home_models.dart';
 import '../content_details/presentation/content_details_screen.dart';
+import '../watch_history/data/watch_history_storage.dart';
 
 class PipOverlay extends ConsumerStatefulWidget {
   const PipOverlay({super.key});
@@ -19,6 +25,7 @@ class PipOverlay extends ConsumerStatefulWidget {
 
 class _PipOverlayState extends ConsumerState<PipOverlay>
     with SingleTickerProviderStateMixin {
+  final Logger _logger = Logger();
   late Offset _position;
   bool _isDragging = false;
   bool _isResizing = false;
@@ -70,11 +77,22 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
 
   Future<void> _handleFullscreenTap() async {
     try {
+      final vibrationSettings = ref.read(vibrationSettingsProvider);
+      if (vibrationSettings.enabled && vibrationSettings.vibrateOnPip) {
+        VibrationHelper.vibrate(vibrationSettings.strength);
+      }
+
       final pipState = ref.read(pipProvider);
       final contentItemJson = pipState.contentItemJson;
 
       if (contentItemJson == null) {
         if (mounted) {
+          try {
+            final storage = ref.read(watchHistoryStorageProvider);
+            await storage.flush();
+          } catch (e) {
+            _logger.e('[PIP Close] Error flushing watch history: $e');
+          }
           ref.read(pipProvider.notifier).deactivatePip(disposePlayer: false);
         }
         return;
@@ -90,8 +108,62 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
       router.push(ContentDetailsScreen.path, extra: contentItem);
     } catch (e) {
       if (mounted) {
+        try {
+          final storage = ref.read(watchHistoryStorageProvider);
+          await storage.flush();
+        } catch (e) {
+          _logger.e('[PIP Close] Error flushing watch history: $e');
+        }
         ref.read(pipProvider.notifier).deactivatePip(disposePlayer: false);
       }
+    }
+  }
+
+  Future<void> _saveProgressBeforeClose() async {
+    final pipState = ref.read(pipProvider);
+
+    if (pipState.player == null || pipState.contentItemJson == null) {
+      return;
+    }
+
+    try {
+      final contentItem = ContentItem.fromJson(pipState.contentItemJson!);
+      final currentTime = pipState.player!.state.position.inSeconds.toDouble();
+      final duration = pipState.player!.state.duration.inSeconds.toDouble();
+
+      if (duration <= 0) return;
+
+      final server = FtpServersLocalData.getServerByName(
+        contentItem.serverName,
+      );
+
+      if (server == null) return;
+
+      ref
+          .read(watchHistoryNotifierProvider.notifier)
+          .updateProgress(
+            ftpServerId: server.id,
+            serverName: contentItem.serverName,
+            serverType: contentItem.serverType,
+            contentType: contentItem.contentType ?? 'movie',
+            contentId: contentItem.id,
+            contentTitle: contentItem.title,
+            currentTime: currentTime,
+            duration: duration,
+            seasonNumber: pipState.currentSeasonNumber,
+            episodeNumber: pipState.currentEpisodeNumber,
+            episodeId: pipState.currentEpisodeId,
+            episodeTitle: pipState.currentEpisodeTitle,
+            metadata: {
+              'serverName': contentItem.serverName,
+              'posterUrl': contentItem.posterUrl,
+              'year': contentItem.year,
+              'quality': contentItem.quality,
+            },
+            immediate: true,
+          );
+    } catch (e) {
+      _logger.e('[PIP Close] Error saving progress: $e');
     }
   }
 
@@ -260,11 +332,32 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
                                 const SizedBox(width: 4),
                                 _buildControlButton(
                                   icon: Icons.close,
-                                  onTap: () {
+                                  onTap: () async {
+                                    final vibrationSettings = ref.read(
+                                      vibrationSettingsProvider,
+                                    );
+                                    if (vibrationSettings.enabled &&
+                                        vibrationSettings.vibrateOnPip) {
+                                      VibrationHelper.vibrate(
+                                        vibrationSettings.strength,
+                                      );
+                                    }
+
                                     try {
                                       pipState.player?.pause();
                                     } catch (e) {
-                                      // Error pausing player
+                                      _logger.e('Error pausing player: $e');
+                                    }
+                                    await _saveProgressBeforeClose();
+                                    try {
+                                      final storage = ref.read(
+                                        watchHistoryStorageProvider,
+                                      );
+                                      await storage.flush();
+                                    } catch (e) {
+                                      _logger.e(
+                                        '[PIP Close] Error flushing watch history: $e',
+                                      );
                                     }
                                     ref
                                         .read(pipProvider.notifier)
@@ -284,6 +377,15 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
                                 final isPlaying = snapshot.data ?? false;
                                 return GestureDetector(
                                   onTap: () {
+                                    final vibrationSettings = ref.read(
+                                      vibrationSettingsProvider,
+                                    );
+                                    if (vibrationSettings.enabled &&
+                                        vibrationSettings.vibrateOnPip) {
+                                      VibrationHelper.vibrate(
+                                        vibrationSettings.strength,
+                                      );
+                                    }
                                     try {
                                       if (isPlaying) {
                                         pipState.player?.pause();
@@ -292,7 +394,7 @@ class _PipOverlayState extends ConsumerState<PipOverlay>
                                       }
                                       _startHideControlsTimer();
                                     } catch (e) {
-                                      // Ignore errors when toggling playback
+                                      _logger.e('Error toggling playback: $e');
                                     }
                                   },
                                   child: Icon(

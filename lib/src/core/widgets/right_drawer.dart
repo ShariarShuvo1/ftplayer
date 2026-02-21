@@ -2,73 +2,34 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/app_colors.dart';
-import '../../state/auth/auth_controller.dart';
+import '../../app/router.dart';
+import '../../core/utils/vibration_helper.dart';
 import '../../state/ftp/working_ftp_servers_provider.dart';
 import '../../state/ftp/all_ftp_servers_provider.dart';
 import '../../state/ftp/ftp_availability_controller.dart';
+import '../../state/ftp/enabled_servers_provider.dart';
 import '../../state/connectivity/connectivity_provider.dart';
+import '../../state/settings/vibration_settings_provider.dart';
 import 'package:go_router/go_router.dart';
-import '../../features/auth/presentation/profile_screen.dart';
 import '../../features/ftp_servers/presentation/server_scan_screen.dart';
 import '../../features/watch_history/presentation/watch_history_screen.dart';
 import '../../features/downloads/presentation/downloads_screen.dart';
+import '../../features/settings/presentation/settings_screen.dart';
 
 class RightDrawer extends ConsumerWidget {
   const RightDrawer({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final session = ref.watch(authControllerProvider).valueOrNull;
     final workingServersAsync = ref.watch(workingFtpServersProvider);
     final allServersAsync = ref.watch(allFtpServersProvider);
+    final enabledIdsAsync = ref.watch(enabledServerIdsProvider);
     final isOffline = ref.watch(offlineModeProvider);
 
     return Drawer(
       child: SafeArea(
         child: Column(
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: const BoxDecoration(color: AppColors.surfaceAlt),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: isOffline
-                          ? null
-                          : () {
-                              Navigator.of(context).pop();
-                              context.push(ProfileScreen.path);
-                            },
-                      borderRadius: BorderRadius.circular(6),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: Text(
-                          session?.user.name ?? 'Guest',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox.shrink(),
-                  if (!isOffline)
-                    IconButton(
-                      tooltip: 'Logout',
-                      icon: const Icon(
-                        Icons.logout_outlined,
-                        color: AppColors.primary,
-                      ),
-                      onPressed: () {
-                        ref.read(authControllerProvider.notifier).logout();
-                      },
-                    ),
-                ],
-              ),
-            ),
             Expanded(
               child: SingleChildScrollView(
                 child: Padding(
@@ -77,25 +38,25 @@ class RightDrawer extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SizedBox(height: 18),
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.storage,
-                            color: AppColors.primary,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'FTP Servers',
-                              style: Theme.of(context).textTheme.titleMedium
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.textHigh,
-                                  ),
+                      if (!isOffline) ...[
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.storage,
+                              color: AppColors.primary,
+                              size: 20,
                             ),
-                          ),
-                          if (!isOffline)
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'FTP Servers',
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.textHigh,
+                                    ),
+                              ),
+                            ),
                             IconButton(
                               tooltip: 'Sync Availability',
                               icon: const Icon(
@@ -105,7 +66,17 @@ class RightDrawer extends ConsumerWidget {
                               ),
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(),
-                              onPressed: () {
+                              onPressed: () async {
+                                final vibrationSettings = ref.read(
+                                  vibrationSettingsProvider,
+                                );
+                                if (vibrationSettings.enabled &&
+                                    vibrationSettings.vibrateOnMenuNavigation) {
+                                  await VibrationHelper.vibrate(
+                                    vibrationSettings.strength,
+                                  );
+                                }
+                                if (!context.mounted) return;
                                 Navigator.of(context).pop();
                                 ref
                                     .read(
@@ -113,20 +84,25 @@ class RightDrawer extends ConsumerWidget {
                                           .notifier,
                                     )
                                     .reset();
+                                if (!context.mounted) return;
                                 context.push(ServerScanScreen.path);
                               },
                             ),
-                        ],
-                      ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        _buildServersList(
+                          context,
+                          ref,
+                          workingServersAsync,
+                          allServersAsync,
+                          enabledIdsAsync,
+                          isOffline,
+                        ),
+                        const SizedBox(height: 24),
+                      ],
+                      _buildSettingsItem(context, ref, isOffline),
                       const SizedBox(height: 12),
-                      _buildServersList(
-                        context,
-                        ref,
-                        workingServersAsync,
-                        allServersAsync,
-                        isOffline,
-                      ),
-                      const SizedBox(height: 24),
                       _buildDownloadsItem(context, ref, isOffline),
                       const SizedBox(height: 12),
                       _buildWatchHistoryItem(context, ref, isOffline),
@@ -142,55 +118,72 @@ class RightDrawer extends ConsumerWidget {
     );
   }
 
-  Widget _buildServerTile(BuildContext context, server, bool isWorking) {
+  Widget _buildServerTile(
+    BuildContext context,
+    server,
+    bool isWorking,
+    bool isEnabled,
+    Future<void> Function() onToggle,
+  ) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Opacity(
-        opacity: isWorking ? 1.0 : 0.4,
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isWorking
-                  ? AppColors.success.withValues(alpha: 0.3)
-                  : AppColors.surfaceAlt,
+      child: GestureDetector(
+        onTap: isWorking ? onToggle : null,
+        child: Opacity(
+          opacity: isWorking ? (isEnabled ? 1.0 : 0.5) : 0.4,
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isWorking && isEnabled
+                    ? AppColors.success.withValues(alpha: 0.3)
+                    : (isWorking && !isEnabled
+                          ? AppColors.textLow.withValues(alpha: 0.2)
+                          : AppColors.surfaceAlt),
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                isWorking ? Icons.check_circle : Icons.cancel,
-                color: isWorking ? AppColors.success : AppColors.textLow,
-                size: 18,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      server.name,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: isWorking
-                            ? AppColors.textHigh
-                            : AppColors.textLow,
-                      ),
-                    ),
-                    Text(
-                      server.serverType.toUpperCase(),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: isWorking
-                            ? AppColors.textMid
-                            : AppColors.textLow,
-                      ),
-                    ),
-                  ],
+            child: Row(
+              children: [
+                Icon(
+                  isWorking
+                      ? (isEnabled
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked)
+                      : Icons.cancel,
+                  color: isWorking
+                      ? (isEnabled ? AppColors.success : AppColors.textMid)
+                      : AppColors.textLow,
+                  size: 18,
                 ),
-              ),
-            ],
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        server.name,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: isWorking && isEnabled
+                              ? AppColors.textHigh
+                              : AppColors.textLow,
+                        ),
+                      ),
+                      Text(
+                        server.serverType.toUpperCase(),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: isWorking && isEnabled
+                              ? AppColors.textMid
+                              : AppColors.textLow,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -202,54 +195,112 @@ class RightDrawer extends ConsumerWidget {
     WidgetRef ref,
     AsyncValue<List<dynamic>> workingServersAsync,
     AsyncValue<List<dynamic>> allServersAsync,
+    AsyncValue<List<String>> enabledIdsAsync,
     bool isOffline,
   ) {
     return workingServersAsync.when(
       data: (workingServers) {
         return allServersAsync.when(
           data: (allServers) {
-            if (workingServers.isEmpty && allServers.isEmpty) {
-              return Text(
-                'No servers configured',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyMedium?.copyWith(color: AppColors.textMid),
-              );
-            }
+            return enabledIdsAsync.when(
+              data: (enabledIds) {
+                if (workingServers.isEmpty && allServers.isEmpty) {
+                  return Text(
+                    'No servers configured',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodyMedium?.copyWith(color: AppColors.textMid),
+                  );
+                }
 
-            if (workingServers.isEmpty && allServers.isNotEmpty) {
-              return Column(
-                children: List.generate(allServers.length, (index) {
-                  final server = allServers[index];
-                  return _buildServerTile(context, server, false);
-                }),
-              );
-            }
+                if (workingServers.isEmpty && allServers.isNotEmpty) {
+                  return Column(
+                    children: List.generate(allServers.length, (index) {
+                      final server = allServers[index];
+                      return _buildServerTile(
+                        context,
+                        server,
+                        false,
+                        false,
+                        () async {},
+                      );
+                    }),
+                  );
+                }
 
-            final workingIds = workingServers.map((s) => s.id).toSet();
-            final workingServersList = allServers
-                .where((s) => workingIds.contains(s.id))
-                .toList();
-            final nonWorkingServersList = allServers
-                .where((s) => !workingIds.contains(s.id))
-                .toList();
+                final workingIds = workingServers.map((s) => s.id).toSet();
+                final workingServersList = allServers
+                    .where((s) => workingIds.contains(s.id))
+                    .toList();
 
-            final orderedServers = [
-              ...workingServersList,
-              ...nonWorkingServersList,
-            ];
+                final displayServers =
+                    workingServersList.isEmpty && workingServers.isNotEmpty
+                    ? workingServers
+                    : workingServersList;
 
-            final displayServers =
-                orderedServers.isEmpty && workingServers.isNotEmpty
-                ? workingServers
-                : orderedServers;
+                return Column(
+                  children: List.generate(displayServers.length, (index) {
+                    final server = displayServers[index];
+                    final isWorking = workingIds.contains(server.id);
+                    final isEnabled = enabledIds.contains(server.id);
+                    final vibrationSettings = ref.watch(
+                      vibrationSettingsProvider,
+                    );
 
-            return Column(
-              children: List.generate(displayServers.length, (index) {
-                final server = displayServers[index];
-                final isWorking = workingIds.contains(server.id);
-                return _buildServerTile(context, server, isWorking);
-              }),
+                    return _buildServerTile(
+                      context,
+                      server,
+                      isWorking,
+                      isEnabled,
+                      () async {
+                        if (vibrationSettings.enabled &&
+                            vibrationSettings.vibrateOnMenuNavigation) {
+                          await VibrationHelper.vibrate(
+                            vibrationSettings.strength,
+                          );
+                        }
+                        ref
+                            .read(enabledServersControllerProvider.notifier)
+                            .toggleServer(server.id);
+                      },
+                    );
+                  }),
+                );
+              },
+              loading: () {
+                if (workingServers.isEmpty) {
+                  return const CircularProgressIndicator();
+                }
+                return Column(
+                  children: List.generate(workingServers.length, (index) {
+                    final server = workingServers[index];
+                    return _buildServerTile(
+                      context,
+                      server,
+                      true,
+                      true,
+                      () async {},
+                    );
+                  }),
+                );
+              },
+              error: (e, _) {
+                if (workingServers.isEmpty) {
+                  return const CircularProgressIndicator();
+                }
+                return Column(
+                  children: List.generate(workingServers.length, (index) {
+                    final server = workingServers[index];
+                    return _buildServerTile(
+                      context,
+                      server,
+                      true,
+                      true,
+                      () async {},
+                    );
+                  }),
+                );
+              },
             );
           },
           loading: () {
@@ -259,7 +310,13 @@ class RightDrawer extends ConsumerWidget {
             return Column(
               children: List.generate(workingServers.length, (index) {
                 final server = workingServers[index];
-                return _buildServerTile(context, server, true);
+                return _buildServerTile(
+                  context,
+                  server,
+                  true,
+                  true,
+                  () async {},
+                );
               }),
             );
           },
@@ -277,7 +334,13 @@ class RightDrawer extends ConsumerWidget {
             return Column(
               children: List.generate(workingServers.length, (index) {
                 final server = workingServers[index];
-                return _buildServerTile(context, server, true);
+                return _buildServerTile(
+                  context,
+                  server,
+                  true,
+                  true,
+                  () async {},
+                );
               }),
             );
           },
@@ -311,6 +374,79 @@ class RightDrawer extends ConsumerWidget {
     );
   }
 
+  Widget _buildSettingsItem(
+    BuildContext context,
+    WidgetRef ref,
+    bool isOffline,
+  ) {
+    final isOnSettings =
+        GoRouter.of(
+          context,
+        ).routerDelegate.currentConfiguration.last.matchedLocation ==
+        SettingsScreen.path;
+
+    return GestureDetector(
+      onTap: !isOnSettings
+          ? () {
+              final vibrationSettings = ref.read(vibrationSettingsProvider);
+              if (vibrationSettings.enabled &&
+                  vibrationSettings.vibrateOnMenuNavigation) {
+                VibrationHelper.vibrate(vibrationSettings.strength);
+              }
+              Navigator.of(context).pop();
+              navigateToDrawerScreen(context, SettingsScreen.path);
+            }
+          : null,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isOnSettings
+              ? AppColors.primary.withValues(alpha: 0.2)
+              : AppColors.primary.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.primary, width: 1),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.settings, color: AppColors.primary, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Settings',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                  Text(
+                    isOnSettings ? 'Currently viewing' : 'App preferences',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: isOnSettings
+                          ? AppColors.success.withValues(alpha: 0.7)
+                          : AppColors.textMid,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Opacity(
+              opacity: isOnSettings ? 0.5 : 1.0,
+              child: Icon(
+                isOnSettings ? Icons.check_circle : Icons.arrow_forward_ios,
+                color: AppColors.primary,
+                size: isOnSettings ? 16 : 14,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildDownloadsItem(
     BuildContext context,
     WidgetRef ref,
@@ -325,8 +461,13 @@ class RightDrawer extends ConsumerWidget {
     return GestureDetector(
       onTap: !isOnDownloads
           ? () {
+              final vibrationSettings = ref.read(vibrationSettingsProvider);
+              if (vibrationSettings.enabled &&
+                  vibrationSettings.vibrateOnMenuNavigation) {
+                VibrationHelper.vibrate(vibrationSettings.strength);
+              }
               Navigator.of(context).pop();
-              context.push(DownloadsScreen.path);
+              navigateToDrawerScreen(context, DownloadsScreen.path);
             }
           : null,
       child: Container(
@@ -397,13 +538,16 @@ class RightDrawer extends ConsumerWidget {
 
     return workingServersAsync.when(
       data: (workingServers) {
-        final hasWorkingServers = workingServers.isNotEmpty;
-        final canAccess = !isOffline && hasWorkingServers;
         return GestureDetector(
-          onTap: !isOnWatchHistory && canAccess
+          onTap: !isOnWatchHistory
               ? () {
+                  final vibrationSettings = ref.read(vibrationSettingsProvider);
+                  if (vibrationSettings.enabled &&
+                      vibrationSettings.vibrateOnMenuNavigation) {
+                    VibrationHelper.vibrate(vibrationSettings.strength);
+                  }
                   Navigator.of(context).pop();
-                  context.push(WatchHistoryScreen.path);
+                  navigateToDrawerScreen(context, WatchHistoryScreen.path);
                 }
               : null,
           child: Container(
@@ -414,24 +558,17 @@ class RightDrawer extends ConsumerWidget {
                   ? AppColors.primary.withValues(alpha: 0.2)
                   : AppColors.primary.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: hasWorkingServers
-                    ? AppColors.primary
-                    : AppColors.textLow,
-                width: 1,
-              ),
+              border: Border.all(color: AppColors.primary, width: 1),
             ),
             child: Opacity(
-              opacity: canAccess ? 1.0 : 0.4,
+              opacity: 1.0,
               child: Row(
                 children: [
                   Icon(
                     Icons.history,
-                    color: canAccess
-                        ? (isOnWatchHistory
-                              ? AppColors.primary
-                              : AppColors.primary)
-                        : AppColors.textLow,
+                    color: isOnWatchHistory
+                        ? AppColors.primary
+                        : AppColors.primary,
                     size: 20,
                   ),
                   const SizedBox(width: 10),
@@ -444,30 +581,22 @@ class RightDrawer extends ConsumerWidget {
                           style: Theme.of(context).textTheme.bodyMedium
                               ?.copyWith(
                                 fontWeight: FontWeight.w600,
-                                color: canAccess
-                                    ? (isOnWatchHistory
-                                          ? AppColors.primary
-                                          : AppColors.primary)
-                                    : AppColors.textLow,
+                                color: isOnWatchHistory
+                                    ? AppColors.primary
+                                    : AppColors.primary,
                               ),
                         ),
                         Text(
-                          isOffline
-                              ? 'Disabled in offline mode'
-                              : (hasWorkingServers
-                                    ? (isOnWatchHistory
-                                          ? 'Currently viewing'
-                                          : 'Your watched content')
-                                    : 'Add working FTP servers'),
+                          isOnWatchHistory
+                              ? 'Currently viewing'
+                              : (isOffline
+                                    ? 'Your local watch history'
+                                    : 'Your watched content'),
                           style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(
-                                color: canAccess
-                                    ? (isOnWatchHistory
-                                          ? AppColors.success.withValues(
-                                              alpha: 0.7,
-                                            )
-                                          : AppColors.textMid)
-                                    : AppColors.textLow,
+                                color: isOnWatchHistory
+                                    ? AppColors.success.withValues(alpha: 0.7)
+                                    : AppColors.textMid,
                               ),
                         ),
                       ],
@@ -479,11 +608,9 @@ class RightDrawer extends ConsumerWidget {
                       isOnWatchHistory
                           ? Icons.check_circle
                           : Icons.arrow_forward_ios,
-                      color: hasWorkingServers
-                          ? (isOnWatchHistory
-                                ? AppColors.success
-                                : AppColors.primary)
-                          : AppColors.textLow,
+                      color: isOnWatchHistory
+                          ? AppColors.success
+                          : AppColors.primary,
                       size: isOnWatchHistory ? 16 : 14,
                     ),
                   ),
@@ -496,8 +623,13 @@ class RightDrawer extends ConsumerWidget {
       loading: () => GestureDetector(
         onTap: !isOnWatchHistory
             ? () {
+                final vibrationSettings = ref.read(vibrationSettingsProvider);
+                if (vibrationSettings.enabled &&
+                    vibrationSettings.vibrateOnMenuNavigation) {
+                  VibrationHelper.vibrate(vibrationSettings.strength);
+                }
                 Navigator.of(context).pop();
-                context.push(WatchHistoryScreen.path);
+                navigateToDrawerScreen(context, WatchHistoryScreen.path);
               }
             : null,
         child: Container(
@@ -566,8 +698,13 @@ class RightDrawer extends ConsumerWidget {
       error: (_, _) => GestureDetector(
         onTap: !isOnWatchHistory
             ? () {
+                final vibrationSettings = ref.read(vibrationSettingsProvider);
+                if (vibrationSettings.enabled &&
+                    vibrationSettings.vibrateOnMenuNavigation) {
+                  VibrationHelper.vibrate(vibrationSettings.strength);
+                }
                 Navigator.of(context).pop();
-                context.push(WatchHistoryScreen.path);
+                navigateToDrawerScreen(context, WatchHistoryScreen.path);
               }
             : null,
         child: Container(

@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:logger/logger.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../core/utils/vibration_helper.dart';
+import '../../state/settings/vibration_settings_provider.dart';
+import '../storage/search_history_storage.dart';
 
 final _logger = Logger();
 
-class SearchOverlay extends StatefulWidget {
+class SearchOverlay extends ConsumerStatefulWidget {
   final ValueChanged<String>? onClose;
   final ValueChanged<String>? onSearch;
   final String initialQuery;
@@ -21,10 +25,10 @@ class SearchOverlay extends StatefulWidget {
   });
 
   @override
-  State<SearchOverlay> createState() => _SearchOverlayState();
+  ConsumerState<SearchOverlay> createState() => _SearchOverlayState();
 }
 
-class _SearchOverlayState extends State<SearchOverlay>
+class _SearchOverlayState extends ConsumerState<SearchOverlay>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _slideAnimation;
@@ -36,6 +40,7 @@ class _SearchOverlayState extends State<SearchOverlay>
   Timer? _debounceTimer;
   String? _lastRequestQuery;
   final Dio _dio = Dio();
+  final SearchHistoryStorage _searchHistory = SearchHistoryStorage();
 
   @override
   void initState() {
@@ -59,6 +64,7 @@ class _SearchOverlayState extends State<SearchOverlay>
     _animationController.forward();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
+      _initSearchHistory();
     });
   }
 
@@ -71,6 +77,15 @@ class _SearchOverlayState extends State<SearchOverlay>
     super.dispose();
   }
 
+  Future<void> _initSearchHistory() async {
+    await _searchHistory.init();
+    if (mounted && _searchController.text.trim().isEmpty) {
+      setState(() {
+        _suggestions = _searchHistory.getSearchHistory();
+      });
+    }
+  }
+
   void _onSearchChanged() {
     setState(() {
       _suggestions.clear();
@@ -80,6 +95,9 @@ class _SearchOverlayState extends State<SearchOverlay>
 
     final query = _searchController.text.trim();
     if (query.isEmpty) {
+      setState(() {
+        _suggestions = _searchHistory.getSearchHistory();
+      });
       return;
     }
 
@@ -106,11 +124,17 @@ class _SearchOverlayState extends State<SearchOverlay>
       if (!mounted || query != _searchController.text.trim()) return;
 
       final jsonpString = response.data as String;
-      final suggestions = _parseSuggestions(jsonpString);
+      final googleSuggestions = _parseSuggestions(jsonpString);
+      final matchingHistory = _searchHistory.getMatchingHistory(query);
+
+      final mergedSuggestions = <String>[
+        ...matchingHistory,
+        ...googleSuggestions.where((s) => !matchingHistory.contains(s)),
+      ];
 
       if (mounted && query == _searchController.text.trim()) {
         setState(() {
-          _suggestions = suggestions.take(5).toList();
+          _suggestions = mergedSuggestions.take(5).toList();
         });
       }
     } catch (e, stackTrace) {
@@ -129,8 +153,6 @@ class _SearchOverlayState extends State<SearchOverlay>
 
       final jsonString = jsonpString.substring(startIndex, endIndex + 1);
 
-      // Structure: ["query", ["suggestion1", "suggestion2", ...], [], {...}]
-      // Find the second array (suggestions array)
       int firstArrayStart = jsonString.indexOf('[');
       int depth = 0;
       int secondArrayStart = -1;
@@ -151,7 +173,6 @@ class _SearchOverlayState extends State<SearchOverlay>
         return [];
       }
 
-      // Find the end of the suggestions array
       int suggestionsEnd = -1;
       depth = 0;
       for (int i = secondArrayStart; i < jsonString.length; i++) {
@@ -177,7 +198,6 @@ class _SearchOverlayState extends State<SearchOverlay>
 
       final suggestions = <String>[];
 
-      // Extract all quoted strings
       RegExp regExp = RegExp(r'"([^"]*)"');
       final matches = regExp.allMatches(suggestionsStr);
 
@@ -185,11 +205,10 @@ class _SearchOverlayState extends State<SearchOverlay>
         var suggestion = match.group(1) ?? '';
         if (suggestion.isNotEmpty &&
             suggestion != _searchController.text.trim()) {
-          // Decode Unicode escape sequences
           try {
             suggestion = json.decode('"$suggestion"') as String;
-          } catch (_) {
-            // If decoding fails, use the original string
+          } catch (e) {
+            _logger.e('Error decoding suggestion: $e');
           }
           suggestions.add(suggestion);
         }
@@ -216,7 +235,75 @@ class _SearchOverlayState extends State<SearchOverlay>
     _searchController.text = suggestion;
     _suggestions.clear();
     setState(() {});
+    _searchHistory.addSearchKeyword(suggestion.trim());
     widget.onSearch?.call(suggestion.trim());
+  }
+
+  Widget _buildHighlightedText(String text, String query) {
+    if (query.isEmpty) {
+      return Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: AppColors.textHigh,
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+        ),
+      );
+    }
+
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    final startIndex = lowerText.indexOf(lowerQuery);
+
+    if (startIndex == -1) {
+      return Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: AppColors.textHigh,
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+        ),
+      );
+    }
+
+    final endIndex = startIndex + query.length;
+
+    return RichText(
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(
+        children: [
+          TextSpan(
+            text: text.substring(0, startIndex),
+            style: const TextStyle(
+              color: AppColors.textHigh,
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+          TextSpan(
+            text: text.substring(startIndex, endIndex),
+            style: const TextStyle(
+              color: AppColors.primary,
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+          TextSpan(
+            text: text.substring(endIndex),
+            style: const TextStyle(
+              color: AppColors.textHigh,
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -243,14 +330,14 @@ class _SearchOverlayState extends State<SearchOverlay>
                       child: Column(
                         children: [
                           Padding(
-                            padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                            padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
                             child: Row(
                               children: [
                                 Expanded(
                                   child: Container(
                                     decoration: BoxDecoration(
                                       color: AppColors.cardSurface,
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(12),
                                       border: Border.all(
                                         color: AppColors.outline,
                                         width: 1,
@@ -280,16 +367,19 @@ class _SearchOverlayState extends State<SearchOverlay>
                                               focusedBorder: InputBorder.none,
                                               contentPadding:
                                                   EdgeInsets.symmetric(
-                                                    horizontal: 16,
-                                                    vertical: 16,
+                                                    horizontal: 14,
+                                                    vertical: 12,
                                                   ),
-                                              isDense: false,
+                                              isDense: true,
                                               filled: false,
                                             ),
                                             textInputAction:
                                                 TextInputAction.search,
                                             onSubmitted: (value) {
                                               if (value.trim().isNotEmpty) {
+                                                _searchHistory.addSearchKeyword(
+                                                  value.trim(),
+                                                );
                                                 widget.onSearch?.call(
                                                   value.trim(),
                                                 );
@@ -301,15 +391,26 @@ class _SearchOverlayState extends State<SearchOverlay>
                                           IconButton(
                                             icon: const Icon(
                                               Icons.close,
-                                              size: 20,
+                                              size: 18,
                                             ),
                                             color: AppColors.textMid,
-                                            padding: const EdgeInsets.all(8),
+                                            padding: const EdgeInsets.all(6),
                                             constraints: const BoxConstraints(
-                                              minWidth: 36,
-                                              minHeight: 36,
+                                              minWidth: 32,
+                                              minHeight: 32,
                                             ),
                                             onPressed: () {
+                                              final vibrationSettings = ref
+                                                  .read(
+                                                    vibrationSettingsProvider,
+                                                  );
+                                              if (vibrationSettings.enabled &&
+                                                  vibrationSettings
+                                                      .vibrateOnAppbar) {
+                                                VibrationHelper.vibrate(
+                                                  vibrationSettings.strength,
+                                                );
+                                              }
                                               _searchController.clear();
                                             },
                                           ),
@@ -318,24 +419,34 @@ class _SearchOverlayState extends State<SearchOverlay>
                                     ),
                                   ),
                                 ),
-                                const SizedBox(width: 12),
+                                const SizedBox(width: 10),
                                 Container(
                                   decoration: BoxDecoration(
                                     color: AppColors.primary,
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: IconButton(
-                                    icon: const Icon(Icons.search, size: 24),
+                                    icon: const Icon(Icons.search, size: 22),
                                     color: AppColors.black,
-                                    padding: const EdgeInsets.all(12),
+                                    padding: const EdgeInsets.all(10),
                                     constraints: const BoxConstraints(
-                                      minWidth: 48,
-                                      minHeight: 48,
+                                      minWidth: 44,
+                                      minHeight: 44,
                                     ),
                                     onPressed: () {
                                       final value = _searchController.text
                                           .trim();
                                       if (value.isNotEmpty) {
+                                        final vibrationSettings = ref.read(
+                                          vibrationSettingsProvider,
+                                        );
+                                        if (vibrationSettings.enabled &&
+                                            vibrationSettings.vibrateOnAppbar) {
+                                          VibrationHelper.vibrate(
+                                            vibrationSettings.strength,
+                                          );
+                                        }
+                                        _searchHistory.addSearchKeyword(value);
                                         widget.onSearch?.call(value);
                                       }
                                     },
@@ -359,15 +470,21 @@ class _SearchOverlayState extends State<SearchOverlay>
   }
 
   Widget _buildSuggestionsPanel() {
+    final query = _searchController.text.trim();
+    final matchingHistory = query.isEmpty
+        ? _searchHistory.getSearchHistory()
+        : _searchHistory.getMatchingHistory(query);
+
     return Container(
       color: AppColors.black,
       child: Column(
         children: [
           ...(_suggestions.asMap().entries.map((entry) {
             final isLast = entry.key == _suggestions.length - 1;
+            final isFromHistory = matchingHistory.contains(entry.value);
             return Column(
               children: [
-                _buildSuggestionItem(entry.value),
+                _buildSuggestionItem(entry.value, isFromHistory, query),
                 if (!isLast) Container(height: 1, color: AppColors.outline),
               ],
             );
@@ -378,29 +495,59 @@ class _SearchOverlayState extends State<SearchOverlay>
     );
   }
 
-  Widget _buildSuggestionItem(String suggestion) {
-    return GestureDetector(
-      onTap: () => _selectSuggestion(suggestion),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
-        child: Row(
-          children: [
-            const Icon(Icons.search, size: 16, color: AppColors.textMid),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                suggestion,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppColors.textHigh,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
+  Widget _buildSuggestionItem(
+    String suggestion,
+    bool isFromHistory,
+    String query,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+      child: Row(
+        children: [
+          Icon(
+            isFromHistory ? Icons.history : Icons.search,
+            size: 16,
+            color: AppColors.textMid,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                final vibrationSettings = ref.read(vibrationSettingsProvider);
+                if (vibrationSettings.enabled &&
+                    vibrationSettings.vibrateOnAppbar) {
+                  VibrationHelper.vibrate(vibrationSettings.strength);
+                }
+                _selectSuggestion(suggestion);
+              },
+              child: isFromHistory && query.isNotEmpty
+                  ? _buildHighlightedText(suggestion, query)
+                  : Text(
+                      suggestion,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.textHigh,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () {
+              final vibrationSettings = ref.read(vibrationSettingsProvider);
+              if (vibrationSettings.enabled &&
+                  vibrationSettings.vibrateOnAppbar) {
+                VibrationHelper.vibrate(vibrationSettings.strength);
+              }
+              _searchController.text = suggestion;
+              setState(() {});
+            },
+            child: Icon(Icons.edit, size: 16, color: AppColors.textMid),
+          ),
+        ],
       ),
     );
   }

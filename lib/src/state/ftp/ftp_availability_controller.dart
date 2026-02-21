@@ -4,17 +4,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../amaderftp/amaderftp_session_provider.dart';
 import '../../features/ftp_servers/data/ftp_server_models.dart';
-import '../../features/ftp_servers/data/ftp_server_repository.dart';
+import '../../features/ftp_servers/data/ftp_servers_local_data.dart';
+import '../../features/ftp_servers/data/working_servers_storage.dart';
+import '../../features/ftp_servers/data/enabled_servers_storage.dart';
 import '../connectivity/connectivity_provider.dart';
+import '../settings/home_content_settings_provider.dart';
 import 'working_ftp_servers_provider.dart';
 import 'all_ftp_servers_provider.dart';
+import 'enabled_servers_provider.dart';
 
 final ftpAvailabilityControllerProvider =
     StateNotifierProvider<FtpAvailabilityController, FtpAvailabilityState>((
       ref,
     ) {
       return FtpAvailabilityController(
-        repository: ref.read(ftpServerRepositoryProvider),
+        storage: ref.read(workingServersStorageProvider),
         ref: ref,
       );
     });
@@ -120,18 +124,12 @@ class FtpAvailabilityState {
 }
 
 class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
-  FtpAvailabilityController({required this.repository, required this.ref})
+  FtpAvailabilityController({required this.storage, required this.ref})
     : super(FtpAvailabilityState.initial());
 
-  final FtpServerRepository repository;
+  final WorkingServersStorage storage;
   final Ref ref;
-  final Dio _dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 3),
-      receiveTimeout: const Duration(seconds: 3),
-      validateStatus: (_) => true,
-    ),
-  );
+  late Dio _dio;
 
   Future<void> startAvailabilityCheck() async {
     final isOffline = ref.read(offlineModeProvider);
@@ -148,7 +146,7 @@ class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
     try {
       state = state.copyWith(isScanning: true, hasError: false);
 
-      final servers = await repository.getAllPublicServers();
+      final servers = FtpServersLocalData.getPublicServers();
 
       if (servers.isEmpty) {
         state = state.copyWith(
@@ -214,6 +212,21 @@ class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
       );
     }
 
+    final settings = ref.read(homeContentSettingsProvider);
+    final timeoutSeconds = server.serverType == 'circleftp'
+        ? settings.pingTimeCircleFtp
+        : server.serverType == 'amaderftp'
+        ? settings.pingTimeAmaderFtp
+        : settings.pingTimeDflix;
+
+    _dio = Dio(
+      BaseOptions(
+        connectTimeout: Duration(seconds: timeoutSeconds),
+        receiveTimeout: Duration(seconds: timeoutSeconds),
+        validateStatus: (_) => true,
+      ),
+    );
+
     final stopwatch = Stopwatch()..start();
     try {
       final response = await _dio.get(
@@ -221,8 +234,8 @@ class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
         options: Options(
           followRedirects: true,
           maxRedirects: 3,
-          sendTimeout: const Duration(seconds: 3),
-          receiveTimeout: const Duration(seconds: 3),
+          sendTimeout: Duration(seconds: timeoutSeconds),
+          receiveTimeout: Duration(seconds: timeoutSeconds),
         ),
       );
       stopwatch.stop();
@@ -285,9 +298,13 @@ class FtpAvailabilityController extends StateNotifier<FtpAvailabilityState> {
   Future<void> saveWorkingServers() async {
     try {
       final workingServerIds = state.workingServers.map((s) => s.id).toList();
-      await repository.updateWorkingServers(ftpServerIds: workingServerIds);
+      await storage.saveWorkingServerIds(workingServerIds);
       ref.read(workingFtpServersRefreshProvider.notifier).state++;
       ref.read(allFtpServersRefreshProvider.notifier).state++;
+
+      final enabledStorage = ref.read(enabledServersStorageProvider);
+      await enabledStorage.saveEnabledServerIds(workingServerIds);
+      ref.read(enabledServersRefreshProvider.notifier).state++;
     } catch (e) {
       rethrow;
     }

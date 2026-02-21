@@ -30,7 +30,6 @@ class ContentCard extends ConsumerWidget {
       if (uri != null && uri.hasScheme) {
         return uri.scheme == 'file';
       }
-      // Treat non-http(s) paths (absolute file paths) as local
       return !(url.startsWith('http://') || url.startsWith('https://'));
     }
 

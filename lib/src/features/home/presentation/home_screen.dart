@@ -6,12 +6,14 @@ import '../../../core/widgets/app_scaffold.dart';
 import '../../../core/widgets/right_drawer.dart';
 import '../../../core/widgets/search_overlay.dart';
 import '../../../core/widgets/offline_mode_banner.dart';
+import '../../../core/utils/vibration_helper.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../state/home/home_content_provider.dart';
 import '../../../state/ftp/working_ftp_servers_provider.dart';
 import '../../../state/ftp/ftp_availability_controller.dart';
 import '../../../state/connectivity/connectivity_provider.dart';
 import '../../../state/downloads/download_provider.dart';
+import '../../../state/settings/vibration_settings_provider.dart';
 import '../../search/presentation/search_result_screen.dart';
 import '../../ftp_servers/presentation/server_scan_screen.dart';
 import '../data/home_models.dart';
@@ -38,6 +40,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _toggleSearch() {
+    final vibrationSettings = ref.read(vibrationSettingsProvider);
+    if (vibrationSettings.enabled && vibrationSettings.vibrateOnAppbar) {
+      VibrationHelper.vibrate(vibrationSettings.strength);
+    }
     setState(() {
       _showSearch = !_showSearch;
     });
@@ -141,7 +147,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           builder: (context) {
             return IconButton(
               tooltip: 'Menu',
-              onPressed: () => Scaffold.of(context).openEndDrawer(),
+              onPressed: () {
+                final vibrationSettings = ref.read(vibrationSettingsProvider);
+                if (vibrationSettings.enabled &&
+                    vibrationSettings.vibrateOnAppbar) {
+                  VibrationHelper.vibrate(vibrationSettings.strength);
+                }
+                Scaffold.of(context).openEndDrawer();
+              },
               icon: const Icon(Icons.menu),
               color: AppColors.primary,
             );
@@ -323,6 +336,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           onRefresh: () async {
                             if (!isOffline) {
                               ref.invalidate(homeContentProvider);
+                              await ref.read(homeContentProvider.future);
                             }
                           },
                           color: AppColors.primary,
@@ -394,6 +408,42 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         ),
                       ),
                       error: (error, stack) {
+                        if (error.toString().contains('NO_ENABLED_SERVERS')) {
+                          return Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.storage,
+                                  size: 64,
+                                  color: AppColors.textLow,
+                                ),
+                                const SizedBox(height: 16),
+                                const Text(
+                                  'No servers enabled',
+                                  style: TextStyle(
+                                    color: AppColors.textMid,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 32),
+                                  child: Text(
+                                    'Enable working FTP servers from menu to view content',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: AppColors.textLow,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
                         if (isOffline) {
                           return downloadedContentAsync.when(
                             data: (downloads) {

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:logger/logger.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'pip_state.dart';
 
 class PipNotifier extends StateNotifier<PipState> {
   PipNotifier() : super(PipState.empty);
+
+  final Logger _logger = Logger();
 
   void activatePip({
     required Player player,
@@ -43,7 +46,7 @@ class PipNotifier extends StateNotifier<PipState> {
       try {
         oldPlayer.dispose();
       } catch (e) {
-        // Ignore disposal errors
+        _logger.e('Error disposing player: $e');
       }
     }
   }

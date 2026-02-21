@@ -2,54 +2,69 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../features/auth/presentation/login_screen.dart';
-import '../features/auth/presentation/signup_screen.dart';
-import '../features/auth/presentation/splash_screen.dart';
-import '../features/auth/presentation/welcome_screen.dart';
+import '../features/onboarding/presentation/first_time_welcome_screen.dart';
 import '../features/home/presentation/home_screen.dart';
-import '../features/auth/presentation/profile_screen.dart';
 import '../features/ftp_servers/presentation/server_scan_screen.dart';
 import '../features/content_details/presentation/content_details_screen.dart';
 import '../features/watch_history/presentation/watch_history_screen.dart';
 import '../features/search/presentation/search_result_screen.dart';
 import '../features/downloads/presentation/downloads_screen.dart';
+import '../features/settings/presentation/settings_screen.dart';
 import '../features/home/data/home_models.dart';
-import '../state/auth/auth_controller.dart';
+import '../core/storage/first_time_storage.dart';
 import '../state/connectivity/connectivity_provider.dart';
 
+final drawerScreenPaths = {
+  WatchHistoryScreen.path,
+  DownloadsScreen.path,
+  SettingsScreen.path,
+  SearchResultScreen.path,
+};
+
+void navigateToDrawerScreen(BuildContext context, String path) {
+  final currentPath = GoRouterState.of(context).matchedLocation;
+
+  if (drawerScreenPaths.contains(currentPath) &&
+      drawerScreenPaths.contains(path) &&
+      currentPath != SearchResultScreen.path) {
+    context.pushReplacement(path);
+  } else {
+    context.push(path);
+  }
+}
+
+final initializationProvider = FutureProvider<bool>((ref) async {
+  final storage = ref.read(firstTimeStorageProvider);
+  return await storage.hasShownWelcome();
+});
+
 final goRouterProvider = Provider<GoRouter>((ref) {
-  final notifier = AuthRouterNotifier(ref);
+  final notifier = AppRouterNotifier(ref);
   ref.onDispose(notifier.dispose);
 
   return GoRouter(
-    initialLocation: SplashScreen.path,
+    initialLocation: '/',
     refreshListenable: notifier,
-    redirect: (context, state) {
-      final auth = ref.read(authControllerProvider);
+    redirect: (context, state) async {
       final isOffline = ref.read(offlineModeProvider);
-
-      final isSplash = state.matchedLocation == SplashScreen.path;
-      final isWelcome = state.matchedLocation == WelcomeScreen.path;
-      final isLogin = state.matchedLocation == LoginScreen.path;
-      final isSignup = state.matchedLocation == SignupScreen.path;
+      final isFirstTimeWelcome =
+          state.matchedLocation == FirstTimeWelcomeScreen.path;
       final isServerScan = state.matchedLocation == ServerScanScreen.path;
 
-      final initialized = ref.read(authInitializedProvider);
+      final initState = ref.read(initializationProvider);
 
-      if (auth.isLoading && !initialized) {
-        return isSplash ? null : SplashScreen.path;
+      if (initState.isLoading) {
+        return '/';
       }
 
-      final session = auth.valueOrNull;
-      final isAuthed = session != null;
+      final hasShownWelcome = initState.valueOrNull ?? false;
 
-      if (!isAuthed) {
-        if (isSplash) return WelcomeScreen.path;
-        if (isWelcome || isLogin || isSignup) return null;
-        return WelcomeScreen.path;
+      if (!hasShownWelcome) {
+        if (isFirstTimeWelcome) return null;
+        return FirstTimeWelcomeScreen.path;
       }
 
-      if (isSplash || isWelcome || isLogin || isSignup) {
+      if (state.matchedLocation == '/' || isFirstTimeWelcome) {
         if (isOffline) {
           return HomeScreen.path;
         }
@@ -63,21 +78,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
+      GoRoute(path: '/', builder: (context, state) => const SizedBox.shrink()),
       GoRoute(
-        path: SplashScreen.path,
-        builder: (context, state) => const SplashScreen(),
-      ),
-      GoRoute(
-        path: WelcomeScreen.path,
-        builder: (context, state) => const WelcomeScreen(),
-      ),
-      GoRoute(
-        path: LoginScreen.path,
-        builder: (context, state) => const LoginScreen(),
-      ),
-      GoRoute(
-        path: SignupScreen.path,
-        builder: (context, state) => const SignupScreen(),
+        path: FirstTimeWelcomeScreen.path,
+        builder: (context, state) => const FirstTimeWelcomeScreen(),
       ),
       GoRoute(
         path: ServerScanScreen.path,
@@ -86,10 +90,6 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: HomeScreen.path,
         builder: (context, state) => const HomeScreen(),
-      ),
-      GoRoute(
-        path: ProfileScreen.path,
-        builder: (context, state) => const ProfileScreen(),
       ),
       GoRoute(
         path: ContentDetailsScreen.path,
@@ -118,6 +118,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const DownloadsScreen(),
       ),
       GoRoute(
+        path: SettingsScreen.path,
+        builder: (context, state) => const SettingsScreen(),
+      ),
+      GoRoute(
         path: SearchResultScreen.path,
         builder: (context, state) {
           final query = state.extra as String? ?? '';
@@ -128,9 +132,9 @@ final goRouterProvider = Provider<GoRouter>((ref) {
   );
 });
 
-class AuthRouterNotifier extends ChangeNotifier {
-  AuthRouterNotifier(this.ref) {
-    _sub = ref.listen(authControllerProvider, (prev, next) {
+class AppRouterNotifier extends ChangeNotifier {
+  AppRouterNotifier(this.ref) {
+    _sub = ref.listen(initializationProvider, (prev, next) {
       notifyListeners();
     });
   }

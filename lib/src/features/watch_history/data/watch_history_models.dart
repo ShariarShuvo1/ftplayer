@@ -1,4 +1,5 @@
 enum WatchStatus {
+  planned,
   watching,
   completed,
   onHold,
@@ -6,6 +7,8 @@ enum WatchStatus {
 
   String get value {
     switch (this) {
+      case WatchStatus.planned:
+        return 'planned';
       case WatchStatus.watching:
         return 'watching';
       case WatchStatus.completed:
@@ -19,6 +22,8 @@ enum WatchStatus {
 
   String get label {
     switch (this) {
+      case WatchStatus.planned:
+        return 'Planned';
       case WatchStatus.watching:
         return 'Watching';
       case WatchStatus.completed:
@@ -32,6 +37,8 @@ enum WatchStatus {
 
   static WatchStatus fromString(String value) {
     switch (value) {
+      case 'planned':
+        return WatchStatus.planned;
       case 'watching':
         return WatchStatus.watching;
       case 'completed':
@@ -41,7 +48,7 @@ enum WatchStatus {
       case 'dropped':
         return WatchStatus.dropped;
       default:
-        return WatchStatus.watching;
+        return WatchStatus.planned;
     }
   }
 }
@@ -97,9 +104,28 @@ class EpisodeProgress {
       episodeId: json['episodeId']?.toString(),
       episodeTitle: json['episodeTitle']?.toString(),
       status: WatchStatus.fromString(json['status']?.toString() ?? 'watching'),
-      progress: ProgressInfo.fromJson(json['progress'] as Map<String, dynamic>),
+      progress: ProgressInfo.fromJson(
+        json['progress'] is Map<String, dynamic>
+            ? json['progress']
+            : Map<String, dynamic>.from(
+                (json['progress'] as Map).map(
+                  (k, v) => MapEntry(k.toString(), v),
+                ),
+              ),
+      ),
       lastWatchedAt: DateTime.parse(json['lastWatchedAt'] as String),
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'episodeNumber': episodeNumber,
+      'episodeId': episodeId,
+      'episodeTitle': episodeTitle,
+      'status': status.value,
+      'progress': progress.toJson(),
+      'lastWatchedAt': lastWatchedAt.toIso8601String(),
+    };
   }
 }
 
@@ -119,10 +145,23 @@ class SeasonProgress {
     return SeasonProgress(
       seasonNumber: json['seasonNumber'] as int,
       seasonId: json['seasonId']?.toString(),
-      episodes: episodesData
-          .map((e) => EpisodeProgress.fromJson(e as Map<String, dynamic>))
-          .toList(),
+      episodes: episodesData.map((e) {
+        final episodeMap = e is Map<String, dynamic>
+            ? e
+            : Map<String, dynamic>.from(
+                (e as Map).map((k, v) => MapEntry(k.toString(), v)),
+              );
+        return EpisodeProgress.fromJson(episodeMap);
+      }).toList(),
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'seasonNumber': seasonNumber,
+      'seasonId': seasonId,
+      'episodes': episodes.map((e) => e.toJson()).toList(),
+    };
   }
 }
 
@@ -170,7 +209,10 @@ class WatchHistory {
     String ftpServerIdValue = '';
 
     if (json['ftpServerId'] is Map) {
-      final serverData = json['ftpServerId'] as Map<String, dynamic>;
+      final serverDataRaw = json['ftpServerId'] as Map;
+      final serverData = Map<String, dynamic>.from(
+        serverDataRaw.map((k, v) => MapEntry(k.toString(), v)),
+      );
       ftpServerIdValue = (serverData['_id'] ?? '').toString();
       serverName = (serverData['name'] ?? '').toString();
     } else {
@@ -189,12 +231,33 @@ class WatchHistory {
       contentTitle: (json['contentTitle'] ?? '').toString(),
       status: WatchStatus.fromString(json['status']?.toString() ?? 'watching'),
       progress: json['progress'] != null
-          ? ProgressInfo.fromJson(json['progress'] as Map<String, dynamic>)
+          ? ProgressInfo.fromJson(
+              json['progress'] is Map<String, dynamic>
+                  ? json['progress']
+                  : Map<String, dynamic>.from(
+                      (json['progress'] as Map).map(
+                        (k, v) => MapEntry(k.toString(), v),
+                      ),
+                    ),
+            )
           : null,
-      seriesProgress: seriesProgressData
-          ?.map((s) => SeasonProgress.fromJson(s as Map<String, dynamic>))
-          .toList(),
-      metadata: json['metadata'] as Map<String, dynamic>?,
+      seriesProgress: seriesProgressData?.map((s) {
+        final seasonMap = s is Map<String, dynamic>
+            ? s
+            : Map<String, dynamic>.from(
+                (s as Map).map((k, v) => MapEntry(k.toString(), v)),
+              );
+        return SeasonProgress.fromJson(seasonMap);
+      }).toList(),
+      metadata: json['metadata'] != null
+          ? (json['metadata'] is Map<String, dynamic>
+                ? json['metadata']
+                : Map<String, dynamic>.from(
+                    (json['metadata'] as Map).map(
+                      (k, v) => MapEntry(k.toString(), v),
+                    ),
+                  ))
+          : null,
       lastWatchedAt: DateTime.parse(json['lastWatchedAt'] as String),
       completedAt: json['completedAt'] != null
           ? DateTime.parse(json['completedAt'] as String)
@@ -203,69 +266,25 @@ class WatchHistory {
       updatedAt: DateTime.parse(json['updatedAt'] as String),
     );
   }
-}
 
-class WatchHistoryResponse {
-  WatchHistoryResponse({required this.message, this.watchHistory});
-
-  final String message;
-  final WatchHistory? watchHistory;
-
-  factory WatchHistoryResponse.fromJson(Map<String, dynamic> json) {
-    final watchHistoryData = json['watchHistory'];
-    return WatchHistoryResponse(
-      message: (json['message'] ?? '').toString(),
-      watchHistory: watchHistoryData != null
-          ? WatchHistory.fromJson(watchHistoryData as Map<String, dynamic>)
-          : null,
-    );
-  }
-}
-
-class Pagination {
-  Pagination({
-    required this.total,
-    required this.page,
-    required this.limit,
-    required this.pages,
-  });
-
-  final int total;
-  final int page;
-  final int limit;
-  final int pages;
-
-  factory Pagination.fromJson(Map<String, dynamic> json) {
-    return Pagination(
-      total: json['total'] as int? ?? 0,
-      page: json['page'] as int? ?? 1,
-      limit: json['limit'] as int? ?? 50,
-      pages: json['pages'] as int? ?? 0,
-    );
-  }
-}
-
-class WatchHistoryListResponse {
-  WatchHistoryListResponse({
-    required this.message,
-    required this.watchHistories,
-    required this.pagination,
-  });
-
-  final String message;
-  final List<WatchHistory> watchHistories;
-  final Pagination pagination;
-
-  factory WatchHistoryListResponse.fromJson(Map<String, dynamic> json) {
-    final watchHistoriesData = json['watchHistories'] as List? ?? [];
-    return WatchHistoryListResponse(
-      message: (json['message'] ?? '').toString(),
-      watchHistories: watchHistoriesData
-          .map((e) => WatchHistory.fromJson(e as Map<String, dynamic>))
-          .toList(),
-      pagination: Pagination.fromJson(
-        json['pagination'] as Map<String, dynamic>? ?? {},
-      ),
-    );
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'userId': userId,
+      'ftpServerId': ftpServerId,
+      'serverName': serverName,
+      'serverType': serverType,
+      'contentType': contentType,
+      'contentId': contentId,
+      'contentTitle': contentTitle,
+      'status': status.value,
+      'progress': progress?.toJson(),
+      'seriesProgress': seriesProgress?.map((s) => s.toJson()).toList(),
+      'metadata': metadata,
+      'lastWatchedAt': lastWatchedAt.toIso8601String(),
+      'completedAt': completedAt?.toIso8601String(),
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+    };
   }
 }

@@ -288,7 +288,7 @@ class AmaderFtpApi {
   }
 
   String buildStreamUrl(String itemId) {
-    return '$baseUrl/Videos/$itemId/stream?static=true';
+    return '$baseUrl/Videos/$itemId/stream?static=false';
   }
 
   static int ticksToSeconds(int ticks) {

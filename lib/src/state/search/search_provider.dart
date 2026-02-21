@@ -7,6 +7,7 @@ import '../../features/home/data/circleftp_api.dart';
 import '../../features/home/data/dflix_api.dart';
 import '../../features/search/data/search_models.dart';
 import '../ftp/public_ftp_servers_provider.dart';
+import '../ftp/enabled_servers_provider.dart';
 import '../ftp/working_ftp_servers_provider.dart';
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
@@ -20,55 +21,54 @@ final searchResultsProvider = FutureProvider.autoDispose<SearchResultsData>((
     return SearchResultsData.empty('');
   }
 
-  final workingServersAsync = ref.watch(workingFtpServersProvider);
-
-  return workingServersAsync.when(
-    data: (workingServers) async {
-      var servers = workingServers;
-
-      if (servers.isEmpty) {
-        final publicServersAsync = await ref.read(
-          publicFtpServersProvider.future,
-        );
-        servers = publicServersAsync;
-      }
-
-      if (servers.isEmpty) {
-        return SearchResultsData.empty(query);
-      }
-
-      final serverResults = <List<SearchResult>>[];
-      final dio = Dio();
-
-      for (final server in servers) {
-        if (!server.isActive) continue;
-
-        try {
-          if (server.serverType == 'circleftp') {
-            final results = await _searchCircleFtp(dio, server, query);
-            serverResults.add(results);
-          } else if (server.serverType == 'dflix') {
-            final results = await _searchDflix(dio, server, query);
-            serverResults.add(results);
-          } else if (server.serverType == 'amaderftp') {
-            final results = await _searchAmaderFtp(ref, server, query);
-            serverResults.add(results);
-          }
-        } catch (_) {
-          continue;
-        }
-      }
-
-      final interleavedResults = _interleaveSearchResults(serverResults);
-      final filteredResults = interleavedResults
-          .where((r) => r.isMovieOrSeries)
-          .toList();
-
-      return SearchResultsData(results: filteredResults, query: query);
-    },
-    loading: () => SearchResultsData.empty(query),
-    error: (_, _) => SearchResultsData.empty(query),
+  final filteredServers = await ref.watch(
+    filteredWorkingServersProvider.future,
   );
+  final workingServers = await ref.watch(workingFtpServersProvider.future);
+
+  var servers = filteredServers;
+
+  if (servers.isEmpty) {
+    if (workingServers.isNotEmpty) {
+      throw Exception('NO_ENABLED_SERVERS');
+    }
+
+    final publicServersAsync = await ref.read(publicFtpServersProvider.future);
+    servers = publicServersAsync;
+  }
+
+  if (servers.isEmpty) {
+    return SearchResultsData.empty(query);
+  }
+
+  final serverResults = <List<SearchResult>>[];
+  final dio = Dio();
+
+  for (final server in servers) {
+    if (!server.isActive) continue;
+
+    try {
+      if (server.serverType == 'circleftp') {
+        final results = await _searchCircleFtp(dio, server, query);
+        serverResults.add(results);
+      } else if (server.serverType == 'dflix') {
+        final results = await _searchDflix(dio, server, query);
+        serverResults.add(results);
+      } else if (server.serverType == 'amaderftp') {
+        final results = await _searchAmaderFtp(ref, server, query);
+        serverResults.add(results);
+      }
+    } catch (_) {
+      continue;
+    }
+  }
+
+  final interleavedResults = _interleaveSearchResults(serverResults);
+  final filteredResults = interleavedResults
+      .where((r) => r.isMovieOrSeries)
+      .toList();
+
+  return SearchResultsData(results: filteredResults, query: query);
 });
 
 Future<List<SearchResult>> _searchCircleFtp(

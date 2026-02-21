@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:logger/logger.dart';
 import '../../features/downloads/data/download_models.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._();
   late FlutterLocalNotificationsPlugin _notificationsPlugin;
   bool _isInitialized = false;
+  final Logger _logger = Logger();
 
   NotificationService._();
 
@@ -32,24 +34,33 @@ class NotificationService {
         InitializationSettings(android: androidSettings, iOS: iosSettings),
       );
 
-      await _requestPermissions();
+      final granted = await _ensurePermissions();
 
-      _isInitialized = true;
+      if (granted) {
+        _isInitialized = true;
+      }
     } catch (e) {
-      debugPrint('Failed to initialize notifications: $e');
+      _logger.e('Failed to initialize notifications: $e');
     }
   }
 
-  Future<void> _requestPermissions() async {
+  Future<bool> _ensurePermissions() async {
+    var granted = true;
+
     final androidImplementation = _notificationsPlugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
 
     if (androidImplementation != null) {
-      final granted = await androidImplementation
-          .requestNotificationsPermission();
-      debugPrint('Android notification permission granted: $granted');
+      final enabled = await androidImplementation.areNotificationsEnabled();
+      if (enabled == false) {
+        final requested = await androidImplementation
+            .requestNotificationsPermission();
+        if (requested == false) {
+          granted = false;
+        }
+      }
     }
 
     final iosImplementation = _notificationsPlugin
@@ -58,13 +69,17 @@ class NotificationService {
         >();
 
     if (iosImplementation != null) {
-      final granted = await iosImplementation.requestPermissions(
+      final result = await iosImplementation.requestPermissions(
         alert: true,
         badge: true,
         sound: false,
       );
-      debugPrint('iOS notification permission granted: $granted');
+      if (result != true) {
+        granted = false;
+      }
     }
+
+    return granted;
   }
 
   Future<void> createDownloadNotificationChannel() async {
@@ -85,7 +100,7 @@ class NotificationService {
           >()
           ?.createNotificationChannel(androidChannel);
     } catch (e) {
-      debugPrint('Failed to create notification channel: $e');
+      _logger.e('Failed to create notification channel: $e');
     }
   }
 
@@ -98,7 +113,11 @@ class NotificationService {
     try {
       await initialize();
       if (!_isInitialized) {
-        debugPrint('Notification service not initialized');
+        return;
+      }
+
+      final hasPermission = await _ensurePermissions();
+      if (!hasPermission) {
         return;
       }
 
@@ -123,7 +142,7 @@ class NotificationService {
         autoCancel: false,
         color: const Color(0xFFFF8A00),
         colorized: true,
-        icon: '@mipmap/ic_launcher',
+        icon: '@drawable/ic_launcher',
         styleInformation: BigTextStyleInformation(
           _buildNotificationBody(task),
           contentTitle: task.displayTitle,
@@ -154,7 +173,7 @@ class NotificationService {
         payload: 'download_${task.id}',
       );
     } catch (e) {
-      debugPrint('Failed to show download notification: $e');
+      _logger.e('Failed to show download notification: $e');
     }
   }
 
@@ -201,7 +220,7 @@ class NotificationService {
     try {
       await _notificationsPlugin.cancel(1);
     } catch (e) {
-      // Handle any errors during cancellation
+      _logger.e('Error canceling download notification: $e');
     }
   }
 
@@ -209,7 +228,7 @@ class NotificationService {
     try {
       await _notificationsPlugin.cancelAll();
     } catch (e) {
-      // Handle any errors during cancellation
+      _logger.e('Error clearing notifications: $e');
     }
   }
 }

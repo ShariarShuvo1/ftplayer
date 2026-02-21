@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../core/services/notification_service.dart';
 import 'download_models.dart';
@@ -19,6 +20,7 @@ class DownloadManager {
   static const _downloadsBoxName = 'downloaded_content';
 
   final _logger = Logger();
+  bool _wakelockHeld = false;
 
   Box<DownloadTask>? _tasksBox;
   Box<DownloadedContent>? _downloadsBox;
@@ -83,13 +85,16 @@ class DownloadManager {
 
     final allTasks = _tasksBox?.values.toList() ?? [];
     for (final task in allTasks) {
-      if (task.status == DownloadStatus.downloading) {
-        final restoredTask = task.copyWith(status: DownloadStatus.queued);
+      if (task.status == DownloadStatus.downloading ||
+          task.status == DownloadStatus.paused) {
+        final restoredTask = task.copyWith(status: DownloadStatus.paused);
         await _tasksBox?.put(task.id, restoredTask);
       }
     }
 
     await _cleanupOrphanFiles();
+
+    await _updateWakelockState();
 
     _notifyTasksUpdate();
     _notifyDownloadsUpdate();
@@ -99,6 +104,7 @@ class DownloadManager {
 
   Future<void> dispose() async {
     _speedTimer?.cancel();
+    await _releaseWakelockIfIdle(force: true);
     _tasksController.close();
     _downloadsController.close();
     _activeDownloadController.close();
@@ -280,6 +286,7 @@ class DownloadManager {
     _notifyTasksUpdate();
     _activeDownloadController.add(null);
     _isProcessing = false;
+    await _updateWakelockState();
     _processQueue();
   }
 
@@ -291,6 +298,8 @@ class DownloadManager {
         await pauseDownload(task.id);
       }
     }
+
+    await _updateWakelockState();
   }
 
   Future<void> resumeDownload(String taskId) async {
@@ -301,6 +310,7 @@ class DownloadManager {
     final updatedTask = task.copyWith(status: DownloadStatus.queued);
     await _tasksBox?.put(taskId, updatedTask);
     _notifyTasksUpdate();
+    await _updateWakelockState();
     _processQueue();
   }
 
@@ -329,6 +339,7 @@ class DownloadManager {
     _notifyTasksUpdate();
     _activeDownloadController.add(null);
     _isProcessing = false;
+    await _updateWakelockState();
     _processQueue();
   }
 
@@ -360,13 +371,20 @@ class DownloadManager {
     final task = _tasksBox?.get(taskId);
     if (task == null) return;
 
+    final existingBytes = task.downloadedBytes;
+    final totalBytes = task.totalBytes;
+    final progress = totalBytes > 0
+        ? (existingBytes / totalBytes).clamp(0.0, 1.0)
+        : 0.0;
+
     final updatedTask = task.copyWith(
       status: DownloadStatus.queued,
-      progress: 0,
+      progress: progress,
       error: null,
     );
     await _tasksBox?.put(taskId, updatedTask);
     _notifyTasksUpdate();
+    await _updateWakelockState();
     _processQueue();
   }
 
@@ -375,7 +393,10 @@ class DownloadManager {
     if (activeDownload != null) return;
 
     final queuedTask = queuedTasks.firstOrNull;
-    if (queuedTask == null) return;
+    if (queuedTask == null) {
+      await _updateWakelockState();
+      return;
+    }
 
     _isProcessing = true;
     await _startDownload(queuedTask);
@@ -386,6 +407,7 @@ class DownloadManager {
     _currentCancelToken = CancelToken();
     _lastDownloadedBytes = task.downloadedBytes;
     _lastSpeedCheck = DateTime.now();
+    await _ensureWakelock();
     final updatedTask = task.copyWith(status: DownloadStatus.downloading);
     await _tasksBox?.put(task.id, updatedTask);
     _notifyTasksUpdate();
@@ -501,7 +523,7 @@ class DownloadManager {
           _activeDownloadController.add(progressTask);
           if (progressTask.status == DownloadStatus.downloading &&
               _pausedOrCancelledTaskId != task.id) {
-            await NotificationService().showDownloadNotification(progressTask);
+            await _notificationService.showDownloadNotification(progressTask);
           }
           lastUpdateTime = now;
         }
@@ -555,6 +577,7 @@ class DownloadManager {
     } finally {
       _isProcessing = false;
       _processQueue();
+      await _updateWakelockState();
     }
   }
 
@@ -644,6 +667,8 @@ class DownloadManager {
     if (path.endsWith('.avi')) return 'avi';
     if (path.endsWith('.mov')) return 'mov';
     if (path.endsWith('.webm')) return 'webm';
+    if (path.endsWith('.m4v')) return 'm4v';
+    if (path.endsWith('.3gp')) return '3gp';
     return 'mp4';
   }
 
@@ -665,6 +690,7 @@ class DownloadManager {
         await _cleanupOrphanInDirectory(
           downloadDir,
           _downloadsBox?.values.toList() ?? [],
+          tasks: _tasksBox?.values.toList() ?? [],
           isVideos: true,
         );
       }
@@ -686,6 +712,7 @@ class DownloadManager {
   Future<void> _cleanupOrphanInDirectory(
     Directory directory,
     List<DownloadedContent> validDownloads, {
+    List<DownloadTask> tasks = const [],
     required bool isVideos,
   }) async {
     try {
@@ -699,6 +726,13 @@ class DownloadManager {
           isOrphan = !validDownloads.any(
             (d) => d.localPath.split(Platform.pathSeparator).last == fileName,
           );
+          if (isOrphan) {
+            isOrphan = !tasks.any(
+              (t) =>
+                  (t.localPath ?? '').split(Platform.pathSeparator).last ==
+                  fileName,
+            );
+          }
         } else {
           isOrphan = !validDownloads.any(
             (d) =>
@@ -723,8 +757,7 @@ class DownloadManager {
       final allTasks = _tasksBox?.values.toList() ?? [];
 
       for (final task in allTasks) {
-        if (task.status == DownloadStatus.failed ||
-            task.status == DownloadStatus.cancelled) {
+        if (task.status == DownloadStatus.cancelled) {
           if (task.localPath != null) {
             try {
               final file = File(task.localPath!);
@@ -741,6 +774,32 @@ class DownloadManager {
       _notifyTasksUpdate();
     } catch (e) {
       _logger.e('Error cleaning up failed tasks: $e');
+    }
+  }
+
+  Future<void> _ensureWakelock() async {
+    if (_wakelockHeld) return;
+    try {
+      await WakelockPlus.enable();
+      _wakelockHeld = true;
+    } catch (_) {}
+  }
+
+  Future<void> _releaseWakelockIfIdle({bool force = false}) async {
+    if (!_wakelockHeld) return;
+    if (!force && activeDownload != null) return;
+
+    try {
+      await WakelockPlus.disable();
+      _wakelockHeld = false;
+    } catch (_) {}
+  }
+
+  Future<void> _updateWakelockState() async {
+    if (activeDownload != null || queuedTasks.isNotEmpty) {
+      await _ensureWakelock();
+    } else {
+      await _releaseWakelockIfIdle();
     }
   }
 

@@ -1,9 +1,11 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:logger/logger.dart';
 
 import '../../core/network/dio_provider.dart';
 import '../../features/content_details/data/content_details_api.dart';
 import '../../features/content_details/data/content_details_models.dart';
+import '../../features/watch_history/data/watch_history_models.dart';
+import '../../features/watch_history/data/watch_history_storage.dart';
 import '../amaderftp/amaderftp_session_provider.dart';
 import '../ftp/working_ftp_servers_provider.dart';
 
@@ -11,6 +13,8 @@ final contentDetailsApiProvider = Provider<ContentDetailsApi>((ref) {
   final dio = ref.watch(dioProvider);
   return ContentDetailsApi(dio);
 });
+
+final _logger = Logger();
 
 final contentDetailsProvider = FutureProvider.family
     .autoDispose<
@@ -23,12 +27,10 @@ final contentDetailsProvider = FutureProvider.family
       })
     >((ref, params) async {
       try {
-        // Handle AmaderFTP separately - it can work with or without initialData
         if (params.serverType == 'amaderftp') {
           return await _buildAmaderFtpDetails(ref, params);
         }
 
-        // For other servers, use initialData if available
         if (params.initialData != null) {
           if (params.serverType == 'circleftp') {
             return ContentDetails.fromCircleFtp(
@@ -45,7 +47,6 @@ final contentDetailsProvider = FutureProvider.family
           }
         }
 
-        // Fallback for CircleFTP and Dflix without initialData
         final api = ref.watch(contentDetailsApiProvider);
         final workingServers = await ref.watch(
           workingFtpServersProvider.future,
@@ -82,8 +83,8 @@ final contentDetailsProvider = FutureProvider.family
 
         throw Exception('Unknown server type: ${params.serverType}');
       } catch (e, stackTrace) {
-        debugPrint(
-          '❌ [ContentDetailsProvider] ERROR: $e\nStackTrace: $stackTrace',
+        _logger.e(
+          'Error in ContentDetailsProvider: $e\nStackTrace: $stackTrace',
         );
         rethrow;
       }
@@ -101,10 +102,6 @@ Future<ContentDetails> _buildAmaderFtpDetails(
 ) async {
   const baseUrl = 'http://amaderftp.net:8096';
 
-  debugPrint(
-    '🎬 [AmaderFTP] Building content details for: ${params.contentId}',
-  );
-
   try {
     final sessionNotifier = ref.read(amaderFtpSessionProvider.notifier);
     await sessionNotifier.ensureAuthenticated();
@@ -114,7 +111,6 @@ Future<ContentDetails> _buildAmaderFtpDetails(
 
     final api = sessionNotifier.getAuthenticatedApi();
     if (api == null) {
-      debugPrint('❌ [AmaderFTP] API is null after authentication!');
       throw Exception('AmaderFTP authentication failed');
     }
 
@@ -148,9 +144,7 @@ Future<ContentDetails> _buildAmaderFtpDetails(
 
     return details;
   } catch (e, stackTrace) {
-    debugPrint(
-      '❌ [AmaderFTP] ERROR in _buildAmaderFtpDetails: $e\nStackTrace: $stackTrace',
-    );
+    _logger.e('Error in _buildAmaderFtpDetails: $e\nStackTrace: $stackTrace');
     rethrow;
   }
 }
@@ -192,7 +186,7 @@ Future<List<Season>> _fetchAmaderFtpSeasons(
       );
     }
   } catch (e) {
-    debugPrint('❌ [AmaderFTP] Error fetching seasons/episodes: $e');
+    _logger.e('Error fetching seasons/episodes: $e');
     return [];
   }
 
@@ -220,3 +214,100 @@ String? _extractBaseUrl(dynamic server, String serverType) {
 
   return null;
 }
+
+final contentDetailsWithHistoryProvider = FutureProvider.family
+    .autoDispose<
+      ({
+        ContentDetails details,
+        WatchHistory? watchHistory,
+        Duration? initialPosition,
+      }),
+      ({
+        String contentId,
+        String serverName,
+        String serverType,
+        String ftpServerId,
+        Map<String, dynamic>? initialData,
+        int? initialSeasonNumber,
+        int? initialEpisodeNumber,
+      })
+    >((ref, params) async {
+      final details = await ref.watch(
+        contentDetailsProvider((
+          contentId: params.contentId,
+          serverName: params.serverName,
+          serverType: params.serverType,
+          initialData: params.initialData,
+        )).future,
+      );
+
+      final storage = ref.read(watchHistoryStorageProvider);
+      final watchHistory = await storage.getWatchHistory(
+        ftpServerId: params.ftpServerId,
+        contentId: params.contentId,
+      );
+
+      Duration? initialPosition;
+
+      if (params.initialSeasonNumber != null &&
+          params.initialEpisodeNumber != null &&
+          watchHistory?.seriesProgress != null) {
+        try {
+          final seasonProgress = watchHistory!.seriesProgress!.firstWhere(
+            (s) => s.seasonNumber == params.initialSeasonNumber,
+          );
+
+          final episodeProgress = seasonProgress.episodes.firstWhere(
+            (e) => e.episodeNumber == params.initialEpisodeNumber,
+          );
+
+          final progress = episodeProgress.progress;
+          if (progress.currentTime > 0 && progress.duration > 0) {
+            final percentage = (progress.currentTime / progress.duration) * 100;
+            if (percentage < 95) {
+              initialPosition = Duration(seconds: progress.currentTime.toInt());
+            }
+          }
+        } catch (e) {
+          _logger.w('Error calculating initial position: $e');
+        }
+      } else if (watchHistory?.seriesProgress != null &&
+          watchHistory!.seriesProgress!.isNotEmpty) {
+        EpisodeProgress? lastWatchedEpisode;
+
+        for (final seasonProgress in watchHistory.seriesProgress!) {
+          for (final episodeProgress in seasonProgress.episodes) {
+            if (lastWatchedEpisode == null ||
+                episodeProgress.lastWatchedAt.isAfter(
+                  lastWatchedEpisode.lastWatchedAt,
+                )) {
+              lastWatchedEpisode = episodeProgress;
+            }
+          }
+        }
+
+        if (lastWatchedEpisode != null) {
+          final progress = lastWatchedEpisode.progress;
+          if (progress.currentTime > 0 && progress.duration > 0) {
+            final percentage = (progress.currentTime / progress.duration) * 100;
+            if (percentage < 95) {
+              initialPosition = Duration(seconds: progress.currentTime.toInt());
+            }
+          }
+        }
+      } else if (!details.isSeries && watchHistory?.progress != null) {
+        final progress = watchHistory!.progress!;
+        if (progress.currentTime > 0 && progress.duration > 0) {
+          final percentage = (progress.currentTime / progress.duration) * 100;
+          if (percentage < 95) {
+            initialPosition = Duration(seconds: progress.currentTime.toInt());
+          }
+        }
+      }
+
+      return (
+        details: details,
+        watchHistory: watchHistory,
+        initialPosition: initialPosition,
+      );
+    });

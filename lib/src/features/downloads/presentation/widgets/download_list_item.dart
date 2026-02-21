@@ -1,8 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../../../app/theme/app_colors.dart';
+import '../../../../core/utils/vibration_helper.dart';
+import '../../../../state/settings/vibration_settings_provider.dart';
 import '../../data/download_models.dart';
 import '../../../../state/downloads/download_provider.dart';
 
@@ -48,17 +53,11 @@ class DownloadListItem extends ConsumerWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: AppColors.success.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.download_done_rounded,
-                    color: AppColors.success,
-                    size: 20,
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: _buildPosterImage(
+                    download.localPosterPath,
+                    download.posterUrl,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -117,12 +116,6 @@ class DownloadListItem extends ConsumerWidget {
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                const Icon(
-                  Icons.play_circle_outline,
-                  color: AppColors.primary,
-                  size: 28,
-                ),
               ],
             ),
           ),
@@ -141,6 +134,81 @@ class DownloadListItem extends ConsumerWidget {
       i++;
     }
     return '${size.toStringAsFixed(i == 0 ? 0 : 1)} ${suffixes[i]}';
+  }
+
+  Widget _buildPosterImage(String? localPosterPath, String? posterUrl) {
+    const posterWidth = 60.0;
+    const posterHeight = 90.0;
+    final fallbackIcon = download.isSeries
+        ? Icons.tv_rounded
+        : Icons.movie_outlined;
+
+    if (localPosterPath != null && localPosterPath.isNotEmpty) {
+      final file = File(localPosterPath);
+      if (file.existsSync()) {
+        return Image.file(
+          file,
+          width: posterWidth,
+          height: posterHeight,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => Container(
+            width: posterWidth,
+            height: posterHeight,
+            decoration: BoxDecoration(
+              color: AppColors.success.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(fallbackIcon, color: AppColors.success, size: 28),
+          ),
+        );
+      }
+    }
+
+    if (posterUrl != null && posterUrl.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: posterUrl,
+        width: posterWidth,
+        height: posterHeight,
+        fit: BoxFit.cover,
+        placeholder: (context, url) => Container(
+          width: posterWidth,
+          height: posterHeight,
+          decoration: BoxDecoration(
+            color: AppColors.success.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Center(
+            child: SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.success.withValues(alpha: 0.5),
+              ),
+            ),
+          ),
+        ),
+        errorWidget: (context, url, error) => Container(
+          width: posterWidth,
+          height: posterHeight,
+          decoration: BoxDecoration(
+            color: AppColors.success.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(fallbackIcon, color: AppColors.success, size: 28),
+        ),
+      );
+    }
+
+    return Container(
+      width: posterWidth,
+      height: posterHeight,
+      decoration: BoxDecoration(
+        color: AppColors.success.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(fallbackIcon, color: AppColors.success, size: 28),
+    );
   }
 }
 
@@ -181,37 +249,12 @@ class DownloadTaskItem extends ConsumerWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: isDownloading
-                        ? AppColors.primary.withValues(alpha: 0.2)
-                        : (isFailed
-                              ? AppColors.danger.withValues(alpha: 0.2)
-                              : (isPaused
-                                    ? AppColors.warning.withValues(alpha: 0.2)
-                                    : AppColors.textLow.withValues(
-                                        alpha: 0.2,
-                                      ))),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    isDownloading
-                        ? Icons.downloading_rounded
-                        : (isFailed
-                              ? Icons.error_outline
-                              : (isPaused
-                                    ? Icons.pause_rounded
-                                    : Icons.hourglass_empty_rounded)),
-                    color: isDownloading
-                        ? AppColors.primary
-                        : (isFailed
-                              ? AppColors.danger
-                              : (isPaused
-                                    ? AppColors.warning
-                                    : AppColors.textLow)),
-                    size: 20,
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: _buildTaskPosterImage(
+                    isDownloading,
+                    isPaused,
+                    isFailed,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -301,18 +344,17 @@ class DownloadTaskItem extends ConsumerWidget {
                       context,
                     ).textTheme.labelSmall?.copyWith(color: AppColors.textMid),
                   ),
-                  if (isDownloading)
-                    Flexible(
-                      child: Text(
-                        '${task.downloadedSizeFormatted} / ${task.totalSizeFormatted}',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: AppColors.textMid,
-                        ),
-                        textAlign: TextAlign.end,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                  Flexible(
+                    child: Text(
+                      '${task.downloadedSizeFormatted} / ${task.totalSizeFormatted}',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: AppColors.textMid,
                       ),
+                      textAlign: TextAlign.end,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                  ),
                 ],
               ),
               if (isDownloading) ...[
@@ -367,6 +409,85 @@ class DownloadTaskItem extends ConsumerWidget {
     );
   }
 
+  Widget _buildTaskPosterImage(
+    bool isDownloading,
+    bool isPaused,
+    bool isFailed,
+  ) {
+    const posterWidth = 60.0;
+    const posterHeight = 90.0;
+    final fallbackIcon = task.isSeries
+        ? Icons.tv_rounded
+        : Icons.movie_outlined;
+
+    final statusColor = isDownloading
+        ? AppColors.primary
+        : (isPaused
+              ? AppColors.warning
+              : (isFailed ? AppColors.danger : AppColors.textMid));
+
+    final statusIcon = isDownloading
+        ? Icons.downloading_rounded
+        : (isPaused
+              ? Icons.pause_circle_outline
+              : (isFailed
+                    ? Icons.error_outline
+                    : Icons.file_download_outlined));
+
+    if (task.posterUrl.isNotEmpty) {
+      return Stack(
+        children: [
+          CachedNetworkImage(
+            imageUrl: task.posterUrl,
+            width: posterWidth,
+            height: posterHeight,
+            fit: BoxFit.cover,
+            placeholder: (context, url) => Container(
+              width: posterWidth,
+              height: posterHeight,
+              decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(fallbackIcon, color: statusColor, size: 28),
+            ),
+            errorWidget: (context, url, error) => Container(
+              width: posterWidth,
+              height: posterHeight,
+              decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(fallbackIcon, color: statusColor, size: 28),
+            ),
+          ),
+          Positioned(
+            bottom: 2,
+            right: 2,
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceAlt.withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Icon(statusIcon, color: statusColor, size: 14),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Container(
+      width: posterWidth,
+      height: posterHeight,
+      decoration: BoxDecoration(
+        color: statusColor.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(statusIcon, color: statusColor, size: 28),
+    );
+  }
+
   Widget _buildActions(BuildContext context, WidgetRef ref) {
     final isDownloading = task.status == DownloadStatus.downloading;
     final isPaused = task.status == DownloadStatus.paused;
@@ -378,9 +499,16 @@ class DownloadTaskItem extends ConsumerWidget {
       children: [
         if (isDownloading && !disablePauseResume)
           IconButton(
-            onPressed: () => ref
-                .read(downloadNotifierProvider.notifier)
-                .pauseDownload(task.id),
+            onPressed: () async {
+              final vibrationSettings = ref.read(vibrationSettingsProvider);
+              if (vibrationSettings.enabled &&
+                  vibrationSettings.vibrateOnDownloadScreen) {
+                await VibrationHelper.vibrate(vibrationSettings.strength);
+              }
+              ref
+                  .read(downloadNotifierProvider.notifier)
+                  .pauseDownload(task.id);
+            },
             icon: const Icon(Icons.pause_rounded),
             color: AppColors.warning,
             iconSize: 24,
@@ -389,9 +517,16 @@ class DownloadTaskItem extends ConsumerWidget {
           ),
         if ((isPaused || isQueued) && !disablePauseResume)
           IconButton(
-            onPressed: () => ref
-                .read(downloadNotifierProvider.notifier)
-                .resumeDownload(task.id),
+            onPressed: () async {
+              final vibrationSettings = ref.read(vibrationSettingsProvider);
+              if (vibrationSettings.enabled &&
+                  vibrationSettings.vibrateOnDownloadScreen) {
+                await VibrationHelper.vibrate(vibrationSettings.strength);
+              }
+              ref
+                  .read(downloadNotifierProvider.notifier)
+                  .resumeDownload(task.id);
+            },
             icon: const Icon(Icons.play_arrow_rounded),
             color: AppColors.success,
             iconSize: 24,
@@ -400,9 +535,16 @@ class DownloadTaskItem extends ConsumerWidget {
           ),
         if (isFailed && !disablePauseResume)
           IconButton(
-            onPressed: () => ref
-                .read(downloadNotifierProvider.notifier)
-                .retryDownload(task.id),
+            onPressed: () async {
+              final vibrationSettings = ref.read(vibrationSettingsProvider);
+              if (vibrationSettings.enabled &&
+                  vibrationSettings.vibrateOnDownloadScreen) {
+                await VibrationHelper.vibrate(vibrationSettings.strength);
+              }
+              ref
+                  .read(downloadNotifierProvider.notifier)
+                  .retryDownload(task.id);
+            },
             icon: const Icon(Icons.refresh_rounded),
             color: AppColors.primary,
             iconSize: 24,
@@ -410,9 +552,14 @@ class DownloadTaskItem extends ConsumerWidget {
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         IconButton(
-          onPressed: () => ref
-              .read(downloadNotifierProvider.notifier)
-              .cancelDownload(task.id),
+          onPressed: () async {
+            final vibrationSettings = ref.read(vibrationSettingsProvider);
+            if (vibrationSettings.enabled &&
+                vibrationSettings.vibrateOnDownloadScreen) {
+              await VibrationHelper.vibrate(vibrationSettings.strength);
+            }
+            ref.read(downloadNotifierProvider.notifier).cancelDownload(task.id);
+          },
           icon: const Icon(Icons.close_rounded),
           color: AppColors.danger,
           iconSize: 24,

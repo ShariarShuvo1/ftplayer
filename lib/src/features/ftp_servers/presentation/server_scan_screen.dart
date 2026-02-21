@@ -5,8 +5,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../core/widgets/buttons.dart';
+import '../../../core/utils/vibration_helper.dart';
 import '../../../state/ftp/ftp_availability_controller.dart';
 import '../../../state/ftp/working_ftp_servers_provider.dart';
+import '../../../state/settings/vibration_settings_provider.dart';
 
 class ServerScanScreen extends ConsumerStatefulWidget {
   const ServerScanScreen({super.key});
@@ -442,6 +444,15 @@ class _ServerScanScreenState extends ConsumerState<ServerScanScreen> {
                     onPressed: _isSaving
                         ? null
                         : () {
+                            final vibrationSettings = ref.read(
+                              vibrationSettingsProvider,
+                            );
+                            if (vibrationSettings.enabled &&
+                                vibrationSettings.vibrateOnMenuNavigation) {
+                              VibrationHelper.vibrate(
+                                vibrationSettings.strength,
+                              );
+                            }
                             ref
                                 .read(
                                   ftpAvailabilityControllerProvider.notifier,
@@ -488,6 +499,13 @@ class _ServerScanScreenState extends ConsumerState<ServerScanScreen> {
               : PrimaryButton(
                       onPressed: () async {
                         if (_isSaving) return;
+                        final vibrationSettings = ref.read(
+                          vibrationSettingsProvider,
+                        );
+                        if (vibrationSettings.enabled &&
+                            vibrationSettings.vibrateOnMenuNavigation) {
+                          VibrationHelper.vibrate(vibrationSettings.strength);
+                        }
                         setState(() {
                           _isSaving = true;
                         });

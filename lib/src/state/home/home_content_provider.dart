@@ -1,6 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:logger/logger.dart';
 
 import '../amaderftp/amaderftp_session_provider.dart';
 import '../../features/ftp_servers/data/ftp_server_models.dart';
@@ -8,14 +10,34 @@ import '../../features/home/data/circleftp_api.dart';
 import '../../features/home/data/dflix_api.dart';
 import '../../features/home/data/home_models.dart';
 import '../ftp/public_ftp_servers_provider.dart';
+import '../ftp/enabled_servers_provider.dart';
 import '../ftp/working_ftp_servers_provider.dart';
+import '../connectivity/connectivity_provider.dart';
+import '../settings/home_content_settings_provider.dart';
+
+final _logger = Logger();
 
 final homeContentProvider = FutureProvider.autoDispose<HomeContentData>((
   ref,
 ) async {
+  final isOffline = ref.watch(offlineModeProvider);
+
+  if (isOffline) {
+    return HomeContentData.empty();
+  }
+
+  final contentSettings = ref.watch(homeContentSettingsProvider);
+  final filteredServersFuture = ref.watch(
+    filteredWorkingServersProvider.future,
+  );
   final workingServersFuture = ref.watch(workingFtpServersProvider.future);
 
-  var servers = await workingServersFuture;
+  var servers = await filteredServersFuture;
+  final workingServers = await workingServersFuture;
+
+  if (servers.isEmpty && workingServers.isNotEmpty) {
+    throw Exception('NO_ENABLED_SERVERS');
+  }
 
   if (servers.isEmpty) {
     final publicServersAsync = await ref.read(publicFtpServersProvider.future);
@@ -26,9 +48,10 @@ final homeContentProvider = FutureProvider.autoDispose<HomeContentData>((
     return HomeContentData.empty();
   }
 
-  final serverMovies = <List<ContentItem>>[];
-  final serverSeries = <List<ContentItem>>[];
+  final featuredItems = <ContentItem>[];
+  final latestItems = <ContentItem>[];
   final trendingItems = <ContentItem>[];
+  final tvSeriesItems = <ContentItem>[];
 
   final dio = Dio();
 
@@ -39,198 +62,220 @@ final homeContentProvider = FutureProvider.autoDispose<HomeContentData>((
 
     try {
       if (server.serverType == 'circleftp') {
-        final result = await _fetchCircleFtpContent(dio, server);
-        serverMovies.add(result.movies);
-        serverSeries.add(result.series);
+        final result = await _fetchCircleFtpContent(
+          dio,
+          server,
+          contentSettings,
+        );
+        featuredItems.addAll(result.featured);
+        latestItems.addAll(result.latest);
         trendingItems.addAll(result.trending);
+        tvSeriesItems.addAll(result.tvSeries);
       } else if (server.serverType == 'dflix') {
-        final result = await _fetchDflixContent(dio, server);
-        serverMovies.add(result.movies);
-        serverSeries.add(result.series);
+        final result = await _fetchDflixContent(dio, server, contentSettings);
+        featuredItems.addAll(result.featured);
+        latestItems.addAll(result.latest);
+        tvSeriesItems.addAll(result.tvSeries);
       } else if (server.serverType == 'amaderftp') {
-        final result = await _fetchAmaderFtpContent(ref, server);
-        serverMovies.add(result.movies);
-        serverSeries.add(result.series);
+        final result = await _fetchAmaderFtpContent(
+          ref,
+          server,
+          contentSettings,
+        );
+        featuredItems.addAll(result.featured);
+        latestItems.addAll(result.latest);
         trendingItems.addAll(result.trending);
+        tvSeriesItems.addAll(result.tvSeries);
       }
     } catch (e) {
-      debugPrint(
-        '❌ [HomeContentProvider] Error fetching content from ${server.serverType} server ${server.name}: $e',
+      _logger.e(
+        'Error fetching content from ${server.serverType} server ${server.name}: $e',
       );
       continue;
     }
   }
 
-  final featured = _interleaveContent(serverMovies, 15);
-  final latest = _interleaveContent(serverMovies, 30);
-  final tvSeries = _interleaveContent(serverSeries, 30);
-  final serverTrending = _groupTrendingByServer(trendingItems);
-  final trending = _interleaveContent(serverTrending, 30);
+  final random = _getRandomInstance();
+  featuredItems.shuffle(random);
+  latestItems.shuffle(random);
+  trendingItems.shuffle(random);
+  tvSeriesItems.shuffle(random);
 
   return HomeContentData(
-    featured: featured,
-    trending: trending,
-    latest: latest,
-    tvSeries: tvSeries,
+    featured: featuredItems,
+    trending: trendingItems,
+    latest: latestItems,
+    tvSeries: tvSeriesItems,
   );
 });
 
 Future<_ServerContentResult> _fetchCircleFtpContent(
   Dio dio,
   FtpServerDto server,
+  HomeContentSettings settings,
 ) async {
-  final movies = <ContentItem>[];
-  final series = <ContentItem>[];
+  final featured = <ContentItem>[];
+  final latest = <ContentItem>[];
   final trending = <ContentItem>[];
+  final tvSeries = <ContentItem>[];
 
   final baseUrl = _extractBaseUrl(server);
 
   if (baseUrl == null) {
-    return _ServerContentResult(movies, series, trending);
+    return _ServerContentResult(featured, latest, trending, tvSeries);
   }
 
   final api = CircleFtpApi(dio, baseUrl);
   final imageBaseUrl = '$baseUrl/uploads/';
 
   try {
-    final homeData = await api.getHomePage();
+    if (settings.featuredCircleFtp > 0) {
+      final posts = await api.browseByCategory(
+        '6',
+        limit: settings.featuredCircleFtp,
+      );
+      for (final item in posts) {
+        final itemMap = item as Map<String, dynamic>;
+        final type = itemMap['type']?.toString();
+        if (type == 'singleVideo') {
+          featured.add(
+            ContentItem.fromCircleFtp(itemMap, imageBaseUrl, server.name),
+          );
+        }
+      }
+    }
 
-    final categoryPosts = homeData['categoryPosts'] as List<dynamic>?;
+    if (settings.latestCircleFtp > 0) {
+      final posts = await api.browseByCategory(
+        '6, 260',
+        limit: settings.latestCircleFtp,
+      );
+      for (final item in posts) {
+        final itemMap = item as Map<String, dynamic>;
+        final type = itemMap['type']?.toString();
+        if (type == 'singleVideo') {
+          latest.add(
+            ContentItem.fromCircleFtp(itemMap, imageBaseUrl, server.name),
+          );
+        }
+      }
+    }
 
-    if (categoryPosts != null && categoryPosts.isNotEmpty) {
-      final movieCategories = [
-        'English Movies',
-        'Hindi Movies',
-        'Foreign Language Movies',
-        'English & Foreign Hindi Dubbed Movies',
-        'South Indian Movies',
-        'South Indian Dubbed Movie',
-        'Animation Movies',
-        'Animation Dubbed Movies',
-        'Documentary',
-      ];
-
-      final tvCategories = [
-        'English & Foreign TV Series',
-        'Dubbed TV Series & Shows',
-        'Hindi TV Serials',
-        'English & Foreign Anime Series',
-      ];
-
-      for (final category in categoryPosts) {
-        final categoryMap = category as Map<String, dynamic>;
-        final categoryName = categoryMap['name']?.toString() ?? '';
-        final posts = categoryMap['posts'] as List<dynamic>?;
-
-        if (posts == null || posts.isEmpty) continue;
-
-        if (movieCategories.contains(categoryName)) {
-          for (final item in posts.take(30)) {
-            final itemMap = item as Map<String, dynamic>;
-            final type = itemMap['type']?.toString();
-
-            if (type == 'singleVideo') {
-              final contentItem = ContentItem.fromCircleFtp(
-                itemMap,
-                imageBaseUrl,
-                server.name,
-              );
-              movies.add(contentItem);
-            }
-          }
-        } else if (tvCategories.contains(categoryName)) {
-          for (final item in posts.take(30)) {
-            final itemMap = item as Map<String, dynamic>;
-            final type = itemMap['type']?.toString();
-
-            if (type == 'series') {
-              final contentItem = ContentItem.fromCircleFtp(
-                itemMap,
-                imageBaseUrl,
-                server.name,
-              );
-              series.add(contentItem);
-            }
+    if (settings.trendingCircleFtp > 0) {
+      final homeData = await api.getHomePage();
+      final mostVisitedPosts = homeData['mostVisitedPosts'] as List<dynamic>?;
+      if (mostVisitedPosts != null) {
+        for (final item in mostVisitedPosts.take(settings.trendingCircleFtp)) {
+          final itemMap = item as Map<String, dynamic>;
+          final type = itemMap['type']?.toString();
+          if (type == 'singleVideo' || type == 'series') {
+            trending.add(
+              ContentItem.fromCircleFtp(itemMap, imageBaseUrl, server.name),
+            );
           }
         }
       }
     }
 
-    final mostVisitedPosts = homeData['mostVisitedPosts'] as List<dynamic>?;
-
-    if (mostVisitedPosts != null) {
-      for (final item in mostVisitedPosts.take(30)) {
+    if (settings.tvSeriesCircleFtp > 0) {
+      final posts = await api.browseByCategory(
+        '9',
+        limit: settings.tvSeriesCircleFtp,
+      );
+      for (final item in posts) {
         final itemMap = item as Map<String, dynamic>;
         final type = itemMap['type']?.toString();
-
-        if (type == 'singleVideo' || type == 'series') {
-          final contentItem = ContentItem.fromCircleFtp(
-            itemMap,
-            imageBaseUrl,
-            server.name,
+        if (type == 'series') {
+          tvSeries.add(
+            ContentItem.fromCircleFtp(itemMap, imageBaseUrl, server.name),
           );
-          trending.add(contentItem);
         }
       }
     }
   } catch (e) {
-    return _ServerContentResult(movies, series, trending);
+    return _ServerContentResult(featured, latest, trending, tvSeries);
   }
 
-  return _ServerContentResult(movies, series, trending);
+  return _ServerContentResult(featured, latest, trending, tvSeries);
 }
 
 Future<_ServerContentResult> _fetchDflixContent(
   Dio dio,
   FtpServerDto server,
+  HomeContentSettings settings,
 ) async {
-  final movies = <ContentItem>[];
-  final series = <ContentItem>[];
+  final featured = <ContentItem>[];
+  final latest = <ContentItem>[];
   final trending = <ContentItem>[];
+  final tvSeries = <ContentItem>[];
 
   final baseUrl = _extractBaseUrl(server);
 
   if (baseUrl == null) {
-    return _ServerContentResult(movies, series, trending);
+    return _ServerContentResult(featured, latest, trending, tvSeries);
   }
 
   final api = DflixApi(dio, baseUrl);
   final imageBaseUrl = '$baseUrl/Admin/main/images';
 
   try {
-    final moviesList = await api.getMovies(limit: 30);
-    for (final movie in moviesList) {
-      final contentItem = ContentItem.fromDflix(
-        movie as Map<String, dynamic>,
-        imageBaseUrl,
-        server.name,
+    if (settings.featuredDflix > 0) {
+      final moviesList = await api.getMoviesByCategory(
+        category: 'Hollywood',
+        limit: settings.featuredDflix,
       );
-      movies.add(contentItem);
+      for (final movie in moviesList) {
+        featured.add(
+          ContentItem.fromDflix(
+            movie as Map<String, dynamic>,
+            imageBaseUrl,
+            server.name,
+          ),
+        );
+      }
     }
 
-    final showsList = await api.getTvShows(limit: 30);
-    for (final show in showsList) {
-      final contentItem = ContentItem.fromDflix(
-        show as Map<String, dynamic>,
-        imageBaseUrl,
-        server.name,
-      );
-      series.add(contentItem);
+    if (settings.latestDflix > 0) {
+      final moviesList = await api.getMovies(limit: settings.latestDflix);
+      for (final movie in moviesList) {
+        latest.add(
+          ContentItem.fromDflix(
+            movie as Map<String, dynamic>,
+            imageBaseUrl,
+            server.name,
+          ),
+        );
+      }
+    }
+
+    if (settings.tvSeriesDflix > 0) {
+      final showsList = await api.getTvShows(limit: settings.tvSeriesDflix);
+      for (final show in showsList) {
+        tvSeries.add(
+          ContentItem.fromDflix(
+            show as Map<String, dynamic>,
+            imageBaseUrl,
+            server.name,
+          ),
+        );
+      }
     }
   } catch (e) {
-    return _ServerContentResult(movies, series, trending);
+    return _ServerContentResult(featured, latest, trending, tvSeries);
   }
 
-  return _ServerContentResult(movies, series, trending);
+  return _ServerContentResult(featured, latest, trending, tvSeries);
 }
 
 Future<_ServerContentResult> _fetchAmaderFtpContent(
   Ref ref,
   FtpServerDto server,
+  HomeContentSettings settings,
 ) async {
-  final movies = <ContentItem>[];
-  final series = <ContentItem>[];
+  final featured = <ContentItem>[];
+  final latest = <ContentItem>[];
   final trending = <ContentItem>[];
+  final tvSeries = <ContentItem>[];
 
   const baseUrl = 'http://amaderftp.net:8096';
 
@@ -239,95 +284,119 @@ Future<_ServerContentResult> _fetchAmaderFtpContent(
 
   final api = sessionNotifier.getAuthenticatedApi();
   if (api == null) {
-    debugPrint('❌ [_fetchAmaderFtpContent] API is null after authentication!');
-    return _ServerContentResult(movies, series, trending);
+    _logger.e('API is null after authentication in _fetchAmaderFtpContent');
+    return _ServerContentResult(featured, latest, trending, tvSeries);
   }
 
   try {
-    final moviesList = await api.getLatestMovies(limit: 25);
-    for (final movie in moviesList.take(10)) {
-      final movieMap = movie as Map<String, dynamic>;
-      if (movieMap['Type'] == 'Movie') {
-        try {
-          final itemId = movieMap['Id']?.toString();
-          if (itemId != null && itemId.isNotEmpty) {
-            final detailedItem = await api.getItemDetails(itemId);
-            final contentItem = ContentItem.fromAmaderFtp(
-              detailedItem,
-              baseUrl,
-              server.name,
-            );
-            movies.add(contentItem);
+    if (settings.featuredAmaderFtp > 0) {
+      final moviesList = await api.getLatestMovies(
+        limit: settings.featuredAmaderFtp,
+      );
+      for (final movie in moviesList.take(settings.featuredAmaderFtp)) {
+        final movieMap = movie as Map<String, dynamic>;
+        if (movieMap['Type'] == 'Movie') {
+          try {
+            final itemId = movieMap['Id']?.toString();
+            if (itemId != null && itemId.isNotEmpty) {
+              final detailedItem = await api.getItemDetails(itemId);
+              featured.add(
+                ContentItem.fromAmaderFtp(detailedItem, baseUrl, server.name),
+              );
+            }
+          } catch (e) {
+            continue;
           }
-        } catch (e) {
-          continue;
         }
       }
     }
 
-    final showsList = await api.getLatestTvSeries(limit: 10);
-
-    for (final show in showsList.take(10)) {
-      final showMap = show as Map<String, dynamic>;
-      if (showMap['Type'] == 'Series') {
-        try {
-          final itemId = showMap['Id']?.toString();
-          if (itemId != null && itemId.isNotEmpty) {
-            final detailedItem = await api.getItemDetails(itemId);
-            final contentItem = ContentItem.fromAmaderFtp(
-              detailedItem,
-              baseUrl,
-              server.name,
-            );
-            series.add(contentItem);
+    if (settings.latestAmaderFtp > 0) {
+      final moviesList = await api.getLatestMovies(
+        limit: settings.latestAmaderFtp,
+      );
+      for (final movie in moviesList.take(settings.latestAmaderFtp)) {
+        final movieMap = movie as Map<String, dynamic>;
+        if (movieMap['Type'] == 'Movie') {
+          try {
+            final itemId = movieMap['Id']?.toString();
+            if (itemId != null && itemId.isNotEmpty) {
+              final detailedItem = await api.getItemDetails(itemId);
+              latest.add(
+                ContentItem.fromAmaderFtp(detailedItem, baseUrl, server.name),
+              );
+            }
+          } catch (e) {
+            continue;
           }
-        } catch (e) {
-          continue;
         }
       }
     }
 
-    trending.addAll(movies);
-    trending.addAll(series);
+    if (settings.trendingAmaderFtp > 0) {
+      final moviesList = await api.getLatestMovies(
+        limit: settings.trendingAmaderFtp,
+      );
+      for (final movie in moviesList.take(settings.trendingAmaderFtp)) {
+        final movieMap = movie as Map<String, dynamic>;
+        if (movieMap['Type'] == 'Movie') {
+          try {
+            final itemId = movieMap['Id']?.toString();
+            if (itemId != null && itemId.isNotEmpty) {
+              final detailedItem = await api.getItemDetails(itemId);
+              trending.add(
+                ContentItem.fromAmaderFtp(detailedItem, baseUrl, server.name),
+              );
+            }
+          } catch (e) {
+            continue;
+          }
+        }
+      }
+    }
+
+    if (settings.tvSeriesAmaderFtp > 0) {
+      final showsList = await api.getLatestTvSeries(
+        limit: settings.tvSeriesAmaderFtp,
+      );
+      for (final show in showsList.take(settings.tvSeriesAmaderFtp)) {
+        final showMap = show as Map<String, dynamic>;
+        if (showMap['Type'] == 'Series') {
+          try {
+            final itemId = showMap['Id']?.toString();
+            if (itemId != null && itemId.isNotEmpty) {
+              final detailedItem = await api.getItemDetails(itemId);
+              tvSeries.add(
+                ContentItem.fromAmaderFtp(detailedItem, baseUrl, server.name),
+              );
+            }
+          } catch (e) {
+            continue;
+          }
+        }
+      }
+    }
   } catch (e) {
-    debugPrint('❌ [_fetchAmaderFtpContent] Exception: $e');
-    return _ServerContentResult(movies, series, trending);
+    _logger.e('Exception in _fetchAmaderFtpContent: $e');
+    return _ServerContentResult(featured, latest, trending, tvSeries);
   }
 
-  return _ServerContentResult(movies, series, trending);
+  return _ServerContentResult(featured, latest, trending, tvSeries);
 }
 
-List<ContentItem> _interleaveContent(
-  List<List<ContentItem>> serverContents,
-  int limit,
-) {
-  if (serverContents.isEmpty) return [];
-
-  final result = <ContentItem>[];
-  int maxLength = 0;
-
-  for (final items in serverContents) {
-    if (items.length > maxLength) {
-      maxLength = items.length;
-    }
-  }
-
-  for (int i = 0; i < maxLength && result.length < limit; i++) {
-    for (final items in serverContents) {
-      if (i < items.length && result.length < limit) {
-        result.add(items[i]);
-      }
-    }
-  }
-
-  return result;
-}
+math.Random _getRandomInstance() => math.Random();
 
 class _ServerContentResult {
-  _ServerContentResult(this.movies, this.series, this.trending);
-  final List<ContentItem> movies;
-  final List<ContentItem> series;
+  _ServerContentResult(
+    this.featured,
+    this.latest,
+    this.trending,
+    this.tvSeries,
+  );
+  final List<ContentItem> featured;
+  final List<ContentItem> latest;
   final List<ContentItem> trending;
+  final List<ContentItem> tvSeries;
 }
 
 String? _extractBaseUrl(FtpServerDto server) {
@@ -350,16 +419,4 @@ String? _extractBaseUrl(FtpServerDto server) {
   }
 
   return null;
-}
-
-List<List<ContentItem>> _groupTrendingByServer(
-  List<ContentItem> trendingItems,
-) {
-  final grouped = <String, List<ContentItem>>{};
-
-  for (final item in trendingItems) {
-    grouped.putIfAbsent(item.serverName, () => []).add(item);
-  }
-
-  return grouped.values.toList();
 }

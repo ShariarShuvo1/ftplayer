@@ -6,8 +6,10 @@ import '../../../app/theme/app_colors.dart';
 import '../../../core/widgets/app_scaffold.dart';
 import '../../../core/widgets/right_drawer.dart';
 import '../../../core/widgets/search_overlay.dart';
+import '../../../core/utils/vibration_helper.dart';
 import '../../../state/search/search_provider.dart';
 import '../../../state/ftp/working_ftp_servers_provider.dart';
+import '../../../state/settings/vibration_settings_provider.dart';
 import '../../content_details/presentation/content_details_screen.dart';
 import '../../home/data/home_models.dart';
 import '../../home/presentation/widgets/universal_poster_image.dart';
@@ -24,23 +26,37 @@ class SearchResultScreen extends ConsumerStatefulWidget {
   ConsumerState<SearchResultScreen> createState() => _SearchResultScreenState();
 }
 
-class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
+class _SearchResultScreenState extends ConsumerState<SearchResultScreen>
+    with SingleTickerProviderStateMixin {
   bool _showSearch = false;
   late TextEditingController _searchController;
-  String _selectedFilter = 'all';
+  late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
     _searchController = TextEditingController(text: widget.initialQuery);
+    _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(_onTabChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(searchQueryProvider.notifier).state = widget.initialQuery;
     });
   }
 
+  void _onTabChanged() {
+    if (!_tabController.indexIsChanging) return;
+    setState(() {});
+    final vibrationSettings = ref.read(vibrationSettingsProvider);
+    if (vibrationSettings.enabled && vibrationSettings.vibrateOnTabChange) {
+      VibrationHelper.vibrate(vibrationSettings.strength);
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
+    _tabController.removeListener(_onTabChanged);
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -54,6 +70,10 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
   }
 
   void _toggleSearch() {
+    final vibrationSettings = ref.read(vibrationSettingsProvider);
+    if (vibrationSettings.enabled && vibrationSettings.vibrateOnAppbar) {
+      VibrationHelper.vibrate(vibrationSettings.strength);
+    }
     setState(() {
       _showSearch = !_showSearch;
     });
@@ -75,11 +95,12 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
   }
 
   List<SearchResult> _filterResults(List<SearchResult> results) {
-    if (_selectedFilter == 'all') {
+    final filterIndex = _tabController.index;
+    if (filterIndex == 0) {
       return results;
-    } else if (_selectedFilter == 'movie') {
+    } else if (filterIndex == 1) {
       return results.where((r) => r.contentType == 'movie').toList();
-    } else if (_selectedFilter == 'series') {
+    } else if (filterIndex == 2) {
       return results.where((r) => r.contentType == 'series').toList();
     }
     return results;
@@ -108,6 +129,16 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
 
     return AppScaffold(
       title: 'Search Results',
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () {
+          final vibrationSettings = ref.read(vibrationSettingsProvider);
+          if (vibrationSettings.enabled && vibrationSettings.vibrateOnAppbar) {
+            VibrationHelper.vibrate(vibrationSettings.strength);
+          }
+          context.pop();
+        },
+      ),
       endDrawer: const RightDrawer(),
       actions: [
         workingServersAsync.when(
@@ -146,63 +177,128 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
           builder: (context) {
             return IconButton(
               tooltip: 'Menu',
-              onPressed: () => Scaffold.of(context).openEndDrawer(),
+              onPressed: () {
+                final vibrationSettings = ref.read(vibrationSettingsProvider);
+                if (vibrationSettings.enabled &&
+                    vibrationSettings.vibrateOnAppbar) {
+                  VibrationHelper.vibrate(vibrationSettings.strength);
+                }
+                Scaffold.of(context).openEndDrawer();
+              },
               icon: const Icon(Icons.menu),
               color: AppColors.primary,
             );
           },
         ),
       ],
-      bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(44),
-        child: Container(
-          decoration: BoxDecoration(
-            color: AppColors.black,
-            border: Border(
-              bottom: BorderSide(color: AppColors.outline, width: 0.5),
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.manage_search,
-                  color: AppColors.textMid,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '"${_searchController.text}"',
-                    style: const TextStyle(
-                      color: AppColors.textHigh,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      bottom: null,
       padding: EdgeInsets.zero,
       body: Stack(
         children: [
           Column(
             children: [
               Container(
-                color: AppColors.black,
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                child: Row(
-                  children: [
-                    _buildFilterButton('All', 'all'),
-                    const SizedBox(width: 8),
-                    _buildFilterButton('Movie', 'movie'),
-                    const SizedBox(width: 8),
-                    _buildFilterButton('TV Series', 'series'),
+                decoration: BoxDecoration(
+                  color: AppColors.black,
+                  border: Border(
+                    bottom: BorderSide(color: AppColors.outline, width: 0.5),
+                  ),
+                ),
+                child: GestureDetector(
+                  onTap: _toggleSearch,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.manage_search,
+                          color: AppColors.textMid,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '"${_searchController.text}"',
+                            style: const TextStyle(
+                              color: AppColors.textHigh,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.black,
+                  border: Border(
+                    bottom: BorderSide(color: AppColors.outline, width: 0.5),
+                  ),
+                ),
+                child: TabBar(
+                  controller: _tabController,
+                  isScrollable: false,
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  indicator: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.primary, width: 1.5),
+                  ),
+                  dividerColor: Colors.transparent,
+                  labelColor: AppColors.primary,
+                  unselectedLabelColor: AppColors.textMid,
+                  labelStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
+                  unselectedLabelStyle: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  tabs: const [
+                    Tab(
+                      height: 32,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.apps_outlined, size: 16),
+                          SizedBox(width: 6),
+                          Text('All'),
+                        ],
+                      ),
+                    ),
+                    Tab(
+                      height: 32,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.movie_outlined, size: 16),
+                          SizedBox(width: 6),
+                          Text('Movie'),
+                        ],
+                      ),
+                    ),
+                    Tab(
+                      height: 32,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.tv_outlined, size: 16),
+                          SizedBox(width: 6),
+                          Text('TV Series'),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -248,6 +344,7 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
                     return RefreshIndicator(
                       onRefresh: () async {
                         ref.invalidate(searchResultsProvider);
+                        await ref.read(searchResultsProvider.future);
                       },
                       color: AppColors.primary,
                       backgroundColor: AppColors.surface,
@@ -286,48 +383,86 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
                       ],
                     ),
                   ),
-                  error: (error, stack) => Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.error_outline,
-                          size: 64,
-                          color: AppColors.danger,
-                        ),
-                        const SizedBox(height: 16),
-                        const Text(
-                          'Search failed',
-                          style: TextStyle(
-                            color: AppColors.textMid,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 32),
-                          child: Text(
-                            error.toString(),
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
+                  error: (error, stack) {
+                    if (error.toString().contains('NO_ENABLED_SERVERS')) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.storage,
+                              size: 64,
                               color: AppColors.textLow,
-                              fontSize: 12,
+                            ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No servers enabled',
+                              style: TextStyle(
+                                color: AppColors.textMid,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 32),
+                              child: Text(
+                                'Enable working FTP servers from menu to search content',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: AppColors.textLow,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.error_outline,
+                            size: 64,
+                            color: AppColors.danger,
+                          ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Search failed',
+                            style: TextStyle(
+                              color: AppColors.textMid,
+                              fontSize: 16,
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton(
-                          onPressed: () =>
-                              ref.invalidate(searchResultsProvider),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: AppColors.black,
+                          const SizedBox(height: 8),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            child: Text(
+                              error.toString(),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: AppColors.textLow,
+                                fontSize: 12,
+                              ),
+                            ),
                           ),
-                          child: const Text('Retry'),
-                        ),
-                      ],
-                    ),
-                  ),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: () =>
+                                ref.invalidate(searchResultsProvider),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: AppColors.black,
+                            ),
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -457,39 +592,6 @@ class _SearchResultScreenState extends ConsumerState<SearchResultScreen> {
               ),
             ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildFilterButton(String label, String value) {
-    final isActive = _selectedFilter == value;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          setState(() {
-            _selectedFilter = value;
-          });
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: isActive ? AppColors.primary : AppColors.surface,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isActive ? AppColors.primary : AppColors.outline,
-              width: 1,
-            ),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            style: TextStyle(
-              color: isActive ? AppColors.black : AppColors.textHigh,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
       ),
     );
   }

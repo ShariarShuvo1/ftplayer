@@ -36,6 +36,7 @@ dependencies:
     connectivity_plus: ^7.0.0
     device_info_plus: ^12.3.0
     path_provider: ^2.1.0
+    vibration: ^3.1.5
 
     # UI and visuals
     google_fonts: ^6.2.1
@@ -46,16 +47,9 @@ dependencies:
     go_router: ^17.0.1
 
     # Config & logging
-    flutter_dotenv: ^6.0.0
     logger: ^2.5.0
-    timeago: ^3.7.0
-
-    # Forms
-    flutter_form_builder: ^10.2.0
-    form_builder_validators: ^11.0.0
 
     # Animation & loading
-    animations: ^2.0.11
     flutter_animate: ^4.5.0
     skeletonizer: ^2.1.1
     shimmer_animation: ^2.2.0
@@ -73,4 +67,4 @@ dev_dependencies:
 flutter:
     uses-material-design: true
     assets:
-        - .env
+        - assets/
